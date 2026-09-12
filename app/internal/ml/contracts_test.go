@@ -3,6 +3,7 @@ package ml_test
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"peanut/internal/audio"
@@ -13,11 +14,17 @@ import (
 	"peanut/internal/ml/vad"
 )
 
-type fakeWake struct{ calls int }
+type fakeWake struct {
+	calls  int
+	result kws.Result
+}
 
 func (f *fakeWake) Detect(context.Context, audio.Frame) (kws.Result, error) {
 	f.calls++
-	return kws.Result{Detected: true, Keyword: "peanut", Score: 0.9}, nil
+	if f.result == (kws.Result{}) {
+		return kws.Result{Detected: true, Keyword: "peanut", Score: 0.9}, nil
+	}
+	return f.result, nil
 }
 func (*fakeWake) Reset() error { return nil }
 
@@ -36,6 +43,30 @@ func TestWakeGateSkipsDisabledDetector(t *testing.T) {
 	}
 }
 
+func TestWakeGateRejectsInvalidFrame(t *testing.T) {
+	fake := &fakeWake{}
+	_, err := kws.NewGate(fake).Detect(context.Background(), audio.Frame{})
+	if err == nil || fake.calls != 0 {
+		t.Fatalf("invalid frame err=%v calls=%d", err, fake.calls)
+	}
+}
+
+func TestKWSScoreMustBeFinite(t *testing.T) {
+	for _, score := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+		if err := (kws.Result{Score: score}).Validate(); err == nil {
+			t.Fatalf("accepted KWS score %v", score)
+		}
+	}
+}
+
+func TestWakeGateRejectsInvalidDetectorResult(t *testing.T) {
+	fake := &fakeWake{result: kws.Result{Score: float32(math.NaN())}}
+	frame, _ := audio.NewFrame(make([]float32, audio.FrameSamples))
+	if _, err := kws.NewGate(fake).Detect(context.Background(), frame); err == nil {
+		t.Fatal("gate accepted invalid detector result")
+	}
+}
+
 func TestVADEndpointValues(t *testing.T) {
 	for _, endpoint := range []vad.Endpoint{vad.NoEndpoint, vad.SpeechStarted, vad.SpeechEnded} {
 		result := vad.Result{Endpoint: endpoint, Probability: 0.75}
@@ -45,6 +76,14 @@ func TestVADEndpointValues(t *testing.T) {
 	}
 	if err := (vad.Result{Endpoint: vad.Endpoint(99), Probability: 0.5}).Validate(); err == nil {
 		t.Fatal("accepted invalid endpoint")
+	}
+}
+
+func TestVADProbabilityMustBeFinite(t *testing.T) {
+	for _, probability := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+		if err := (vad.Result{Probability: probability}).Validate(); err == nil {
+			t.Fatalf("accepted VAD probability %v", probability)
+		}
 	}
 }
 
@@ -79,6 +118,14 @@ func TestSpeakerFailureIsAdvisory(t *testing.T) {
 	result := (fakeSpeaker{result: speaker.Result{Err: want}}).Identify(context.Background(), audio.Audio{})
 	if !errors.Is(result.Err, want) || result.ID != "" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestSpeakerScoreMustBeFinite(t *testing.T) {
+	for _, score := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+		if err := (speaker.Result{Score: score}).Validate(); err == nil {
+			t.Fatalf("accepted speaker score %v", score)
+		}
 	}
 }
 

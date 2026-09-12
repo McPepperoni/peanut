@@ -1,19 +1,30 @@
-// Package sherpa is the sole boundary for a future sherpa-onnx native runtime.
+//go:build !cgo || !sherpa
+
+// Package sherpa isolates the optional sherpa-onnx native runtime.
 package sherpa
 
 import (
-	"errors"
 	"fmt"
 
+	"peanut/internal/audio"
 	"peanut/internal/ml"
 )
 
-var ErrUnavailable = errors.New("sherpa native runtime unavailable")
-
-// Open reserves the native-runtime boundary without making builds depend on CGO.
+// Open reports the omitted native runtime without making default builds depend on CGO.
 func Open(manifest ml.Manifest) error {
 	if err := manifest.Validate(); err != nil {
 		return err
 	}
 	return fmt.Errorf("%w: build with the sherpa-onnx native adapter", ErrUnavailable)
+}
+
+// Transcribe reports the omitted runtime after validating boundary inputs.
+func Transcribe(manifest ml.Manifest, input audio.Audio) (string, error) {
+	if err := manifest.Validate(); err != nil {
+		return "", err
+	}
+	if err := input.Validate(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("%w: build with the sherpa-onnx native adapter", ErrUnavailable)
 }

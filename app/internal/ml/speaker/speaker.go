@@ -2,6 +2,8 @@ package speaker
 
 import (
 	"context"
+	"errors"
+	"math"
 
 	"peanut/internal/audio"
 )
@@ -11,6 +13,13 @@ type Result struct {
 	ID    string
 	Score float32
 	Err   error
+}
+
+func (r Result) Validate() error {
+	if math.IsNaN(float64(r.Score)) || math.IsInf(float64(r.Score), 0) {
+		return errors.New("invalid speaker score")
+	}
+	return nil
 }
 
 type SpeakerIdentifier interface {

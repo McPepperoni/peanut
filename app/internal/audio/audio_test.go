@@ -40,3 +40,18 @@ func TestNewAudioRequiresNormalizedFormat(t *testing.T) {
 		t.Fatalf("unexpected audio format: %+v", audio)
 	}
 }
+
+func TestNewAudioRequiresSamples(t *testing.T) {
+	if _, err := NewAudio(SampleRate, Channels, nil); err == nil {
+		t.Fatal("NewAudio accepted empty samples")
+	}
+}
+
+func TestAudioTypesValidateBoundaryValues(t *testing.T) {
+	if err := (Frame{Samples: make([]float32, FrameSamples-1)}).Validate(); err == nil {
+		t.Fatal("Frame.Validate accepted wrong sample count")
+	}
+	if err := (Audio{SampleRate: SampleRate, Channels: Channels}).Validate(); err == nil {
+		t.Fatal("Audio.Validate accepted empty samples")
+	}
+}

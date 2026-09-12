@@ -3,6 +3,7 @@ package vad
 import (
 	"context"
 	"errors"
+	"math"
 
 	"peanut/internal/audio"
 )
@@ -21,7 +22,7 @@ type Result struct {
 }
 
 func (r Result) Validate() error {
-	if r.Endpoint > SpeechEnded || r.Probability < 0 || r.Probability > 1 {
+	if r.Endpoint > SpeechEnded || math.IsNaN(float64(r.Probability)) || math.IsInf(float64(r.Probability), 0) || r.Probability < 0 || r.Probability > 1 {
 		return errors.New("invalid VAD result")
 	}
 	return nil

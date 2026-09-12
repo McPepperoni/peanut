@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 const (
@@ -32,7 +34,7 @@ type Manifest struct {
 }
 
 func (m Manifest) Validate() error {
-	if m.Provider != "" && m.Provider != CPUProvider {
+	if m.Provider != CPUProvider {
 		return fmt.Errorf("%w: provider must be %q", ErrModelInvalid, CPUProvider)
 	}
 	if m.Threads <= 0 {
@@ -63,8 +65,18 @@ func validatePath(name, path string, directory bool) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%w: %s at %q", ErrModelMissing, name, path)
 	}
-	if err != nil || info.IsDir() != directory {
+	if err != nil {
 		return fmt.Errorf("%w: %s at %q", ErrModelInvalid, name, path)
+	}
+	if directory {
+		entries, err := os.ReadDir(path)
+		if !info.IsDir() || err != nil || len(entries) == 0 {
+			return fmt.Errorf("%w: %s directory at %q is empty or unreadable", ErrModelInvalid, name, path)
+		}
+		return nil
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 || !strings.EqualFold(filepath.Ext(path), ".onnx") {
+		return fmt.Errorf("%w: %s at %q must be a non-empty ONNX file", ErrModelInvalid, name, path)
 	}
 	return nil
 }

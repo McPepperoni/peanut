@@ -32,15 +32,34 @@ type Player interface {
 }
 
 func NewFrame(samples []float32) (Frame, error) {
-	if len(samples) != FrameSamples {
-		return Frame{}, errors.New("audio frame must contain 320 samples")
+	frame := Frame{Samples: samples}
+	if err := frame.Validate(); err != nil {
+		return Frame{}, err
 	}
 	return Frame{Samples: append([]float32(nil), samples...)}, nil
 }
 
 func NewAudio(sampleRate, channels int, samples []float32) (Audio, error) {
-	if sampleRate != SampleRate || channels != Channels {
-		return Audio{}, errors.New("audio must be 16 kHz mono")
+	audio := Audio{SampleRate: sampleRate, Channels: channels, Samples: samples}
+	if err := audio.Validate(); err != nil {
+		return Audio{}, err
 	}
 	return Audio{SampleRate: sampleRate, Channels: channels, Samples: append([]float32(nil), samples...)}, nil
+}
+
+func (f Frame) Validate() error {
+	if len(f.Samples) != FrameSamples {
+		return errors.New("audio frame must contain 320 samples")
+	}
+	return nil
+}
+
+func (a Audio) Validate() error {
+	if a.SampleRate != SampleRate || a.Channels != Channels {
+		return errors.New("audio must be 16 kHz mono")
+	}
+	if len(a.Samples) == 0 {
+		return errors.New("audio must contain samples")
+	}
+	return nil
 }
