@@ -80,7 +80,7 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("decode runtime config: %w", err)
 	}
 	cfg.DatabasePath = path
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -130,10 +130,7 @@ func defaultConfig() Config {
 	}
 }
 
-func (cfg Config) validate() error {
-	if cfg.DatabasePath == "" {
-		return errors.New("database path is required")
-	}
+func (cfg Config) Validate() error {
 	if cfg.Audio.SampleRate <= 0 || cfg.Audio.Channels <= 0 || cfg.Audio.FrameSamples <= 0 || cfg.Audio.PreRollMilliseconds < 0 {
 		return errors.New("invalid audio format")
 	}
@@ -147,8 +144,15 @@ func (cfg Config) validate() error {
 	if err != nil || haURL.Host == "" || (haURL.Scheme != "http" && haURL.Scheme != "https") || cfg.HomeAssistant.Timeout <= 0 {
 		return errors.New("invalid Home Assistant config")
 	}
-	if _, _, err := net.SplitHostPort(cfg.API.Address); err != nil {
+	host, _, err := net.SplitHostPort(cfg.API.Address)
+	if err != nil {
 		return errors.New("invalid API address")
+	}
+	if !cfg.API.AllowLAN && host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return errors.New("non-loopback API address requires LAN access")
+		}
 	}
 	if cfg.API.AllowLAN && cfg.API.PairingToken == "" {
 		return errors.New("LAN API requires pairing token")
