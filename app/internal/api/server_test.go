@@ -106,7 +106,7 @@ func TestServerConfigPutCannotOverwritePairingToken(t *testing.T) {
 
 	get := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
 	put := request(t, server.Handler(), http.MethodPut, "/api/v1/config", get.Body.String(), "")
-	if put.Code != http.StatusBadRequest {
+	if put.Code != http.StatusOK {
 		t.Fatalf("GET->PUT status = %d, body = %s", put.Code, put.Body.String())
 	}
 	if got := loadConfig(t, store).API.PairingToken; got != "pairing-secret" {

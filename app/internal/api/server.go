@@ -93,8 +93,9 @@ type configUpdate struct {
 		TimeoutSeconds *int64  `json:"timeout_seconds"`
 	} `json:"home_assistant"`
 	API *struct {
-		Address  *string `json:"address"`
-		AllowLAN *bool   `json:"allow_lan"`
+		Address      *string `json:"address"`
+		AllowLAN     *bool   `json:"allow_lan"`
+		PairingToken *string `json:"pairing_token"`
 	} `json:"api"`
 }
 
@@ -125,6 +126,10 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if update.API != nil {
+		if update.API.PairingToken != nil && *update.API.PairingToken != Redacted {
+			writeError(w, http.StatusBadRequest, "pairing token can only be changed via POST /api/v1/config/pairing-token")
+			return
+		}
 		if update.API.Address != nil {
 			cfg.API.Address = *update.API.Address
 		}
