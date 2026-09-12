@@ -10,13 +10,13 @@ import (
 type State uint8
 
 const (
-	Idle State = iota
-	Wake
-	Ack
-	Listen
-	Record
-	Process
-	Speak
+	WaitingWake State = iota
+	Acknowledging
+	WaitingSpeech
+	Recording
+	Processing
+	Synthesizing
+	Speaking
 )
 
 type Event uint8
@@ -27,6 +27,7 @@ const (
 	SpeechStarted
 	SpeechEnded
 	ProcessingFinished
+	SynthesisFinished
 	PlaybackFinished
 	Timeout
 )
@@ -72,8 +73,13 @@ func (m *Machine) TransitionAt(event Event, now time.Time) error {
 
 func reduce(state State, event Event) (State, error) {
 	transitions := map[State]map[Event]State{
-		Idle: {WakeDetected: Wake}, Wake: {AcknowledgementFinished: Listen}, Listen: {SpeechStarted: Record},
-		Record: {SpeechEnded: Process}, Process: {ProcessingFinished: Speak}, Speak: {PlaybackFinished: Idle},
+		WaitingWake:   {WakeDetected: Acknowledging},
+		Acknowledging: {AcknowledgementFinished: WaitingSpeech},
+		WaitingSpeech: {SpeechStarted: Recording},
+		Recording:     {SpeechEnded: Processing},
+		Processing:    {ProcessingFinished: Synthesizing},
+		Synthesizing:  {SynthesisFinished: Speaking},
+		Speaking:      {PlaybackFinished: WaitingWake},
 	}
 	if next, ok := transitions[state][event]; ok {
 		return next, nil
@@ -83,15 +89,17 @@ func reduce(state State, event Event) (State, error) {
 
 func timeoutFor(state State, cfg Config) time.Duration {
 	switch state {
-	case Wake:
+	case Acknowledging:
 		return cfg.AcknowledgementTimeout
-	case Listen:
+	case WaitingSpeech:
 		return cfg.NoSpeechTimeout
-	case Record:
+	case Recording:
 		return cfg.MaximumCommandDuration
-	case Process:
+	case Processing:
 		return cfg.ProcessingTimeout
-	case Speak:
+	case Synthesizing:
+		return cfg.SynthesisTimeout
+	case Speaking:
 		return cfg.PlaybackTimeout
 	default:
 		return 0
@@ -99,8 +107,8 @@ func timeoutFor(state State, cfg Config) time.Duration {
 }
 
 func timeoutState(state State) State {
-	if state == Record {
-		return Process
+	if state == Recording {
+		return Processing
 	}
-	return Idle
+	return WaitingWake
 }
