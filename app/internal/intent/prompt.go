@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const planJSONSchema = `{"type":"object","properties":{"version":{"type":"integer","const":1},"status":{"type":"string","enum":["execute","clarify","unknown"]},"language":{"type":"string","minLength":1},"steps":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"device_id":{"type":"string"},"action_id":{"type":"string"},"arguments":{"type":"object"}},"required":["device_id","action_id","arguments"],"additionalProperties":false}},"clarification":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1}},"required":["version","status","language","steps","clarification","confidence"],"additionalProperties":false}`
+const planJSONSchema = `{"type":"object","properties":{"version":{"type":"integer","const":1},"status":{"type":"string","enum":["execute","clarify","unknown"]},"language":{"type":"string","minLength":1},"steps":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"device_id":{"type":"string"},"action_id":{"type":"string"},"arguments":{"type":"object","additionalProperties":true}},"required":["device_id","action_id","arguments"],"additionalProperties":false}},"clarification":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1}},"required":["version","status","language","steps","clarification","confidence"],"additionalProperties":false}`
 
 func renderPrompt(transcript string, snapshot CapabilitySnapshot) (string, error) {
 	capabilities, err := json.Marshal(snapshot)

@@ -73,6 +73,38 @@ func TestQwenParserUsesCPUOnlyDeterministicNoThinkingFlags(t *testing.T) {
 	}
 }
 
+func TestQwenParserSchemaAllowsCapabilityArguments(t *testing.T) {
+	snapshot := CapabilitySnapshot{Capabilities: []Capability{{
+		ID: "capability.media", ProviderID: "provider.local", DeviceID: "device.media",
+		Type: "media", Name: "Media player", Actions: []ActionDefinition{{
+			ID: "media.play", Arguments: map[string]ArgumentDefinition{
+				"query":  {Type: TypeString, Required: true},
+				"source": {Type: TypeString, Required: true},
+			},
+		}},
+	}}}
+	output := `{"version":1,"status":"execute","language":"en","steps":[{"device_id":"device.media","action_id":"media.play","arguments":{"query":"jazz","source":"library"}}],"clarification":"","confidence":0.9}`
+	runner := &fakeInferenceRunner{output: []byte(output)}
+	parser := newQwenParser("llama-cli", "model.gguf", 1, time.Second, runner)
+
+	plan, err := parser.Parse(context.Background(), "play jazz from my library", snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Steps[0].Arguments["query"] != "jazz" || plan.Steps[0].Arguments["source"] != "library" {
+		t.Fatalf("arguments = %#v", plan.Steps[0].Arguments)
+	}
+	if schema := flagValue(t, runner.args, "--json-schema"); !strings.Contains(schema, `"arguments":{"type":"object","additionalProperties":true}`) {
+		t.Fatalf("schema blocks capability arguments: %s", schema)
+	}
+	prompt := flagValue(t, runner.args, "--prompt")
+	for _, name := range []string{`"query"`, `"source"`} {
+		if !strings.Contains(prompt, name) {
+			t.Fatalf("prompt does not contain argument %s: %s", name, prompt)
+		}
+	}
+}
+
 func TestQwenParserExtractsOnlyJSONPlan(t *testing.T) {
 	runner := &fakeInferenceRunner{output: []byte("model output:\n```json\n" + validPlanJSON + "\n```\n")}
 	parser := newQwenParser("llama-cli", "model.gguf", 1, time.Second, runner)
