@@ -77,7 +77,12 @@ func ValidateSnapshot(snapshot CapabilitySnapshot) error {
 					return fmt.Errorf("invalid argument schema for action %q", action.ID)
 				}
 			}
+			exactlyOneNames := make(map[string]bool, len(action.ExactlyOneOf))
 			for _, name := range action.ExactlyOneOf {
+				if name == "" || exactlyOneNames[name] {
+					return fmt.Errorf("invalid exactly-one argument %q for action %q", name, action.ID)
+				}
+				exactlyOneNames[name] = true
 				if _, ok := action.Arguments[name]; !ok {
 					return fmt.Errorf("exactly-one argument %q is not declared for action %q", name, action.ID)
 				}

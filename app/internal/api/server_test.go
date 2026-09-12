@@ -190,6 +190,33 @@ func TestServerConfigWriteIsValidatedAtomicAndRediscovered(t *testing.T) {
 	}
 }
 
+func TestServerConfigPutPreservesRedactedHomeAssistantToken(t *testing.T) {
+	db := apiDB(t)
+	store := sqlite.NewConfigStore(db)
+	cfg := loadConfig(t, store)
+	cfg.HomeAssistant.Token = "old-secret"
+	if err := store.Save(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, nil)
+
+	response := request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"home_assistant":{"token":"[REDACTED]"}}`, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("redacted update status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := loadConfig(t, store).HomeAssistant.Token; got != "old-secret" {
+		t.Fatalf("token after redacted update = %q", got)
+	}
+
+	response = request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"home_assistant":{"token":"new-secret"}}`, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("replacement update status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := loadConfig(t, store).HomeAssistant.Token; got != "new-secret" {
+		t.Fatalf("token after replacement update = %q", got)
+	}
+}
+
 func TestServerRefreshEndpointRediscoversCapabilities(t *testing.T) {
 	db := apiDB(t)
 	refresher := &fakeRefresher{}

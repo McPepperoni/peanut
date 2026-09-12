@@ -111,6 +111,16 @@ func TestValidatePlanEnforcesEnvelopeAndStepBound(t *testing.T) {
 	}
 }
 
+func TestValidateSnapshotRejectsInvalidExactlyOneNames(t *testing.T) {
+	for _, names := range [][]string{{"query", "query"}, {""}} {
+		snapshot := testSnapshot()
+		snapshot.Capabilities[0].Actions[0].ExactlyOneOf = names
+		if err := ValidateSnapshot(snapshot); err == nil {
+			t.Fatalf("accepted exactly-one names %#v", names)
+		}
+	}
+}
+
 func testSnapshot() CapabilitySnapshot {
 	return CapabilitySnapshot{Capabilities: []Capability{{
 		ID: "capability.living-room-media", ProviderID: "provider.local", DeviceID: "device.living-room",

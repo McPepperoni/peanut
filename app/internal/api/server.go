@@ -117,7 +117,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		if update.HomeAssistant.URL != nil {
 			cfg.HomeAssistant.URL = *update.HomeAssistant.URL
 		}
-		if update.HomeAssistant.Token != nil {
+		if update.HomeAssistant.Token != nil && *update.HomeAssistant.Token != Redacted {
 			cfg.HomeAssistant.Token = *update.HomeAssistant.Token
 		}
 		if update.HomeAssistant.TimeoutSeconds != nil {
