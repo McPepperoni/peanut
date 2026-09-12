@@ -47,7 +47,7 @@
 
 **Files:** Create `app/go.mod`, `AGENTS.md`, `CLAUDE.md` symlink, `.gitignore`, `README.md`, `app/cmd/peanut/main.go`, `app/internal/config/config.go`, `app/internal/storage/sqlite/db.go`, `app/internal/storage/sqlite/migrations.go`, `app/internal/storage/sqlite/db_test.go`; ignore `dev/home-assistant-core/`, `build/`, `local-model/`, and generated runtime data.
 
-**Interfaces:** `config.Load(path string) (config.Config, error)`, `sqlite.Open(ctx context.Context, path string) (*DB, error)`, `sqlite.Migrate(ctx context.Context) error`.
+**Interfaces:** `config.Load(path string) (config.Config, error)`, `sqlite.Open(ctx context.Context, path string) (*DB, error)`, `(*sqlite.DB).Migrate(ctx context.Context) error`.
 
 - [ ] Write failing tests for default config validation, migration-created tables, and reopen persistence.
 - [ ] Run `cd app; go test ./internal/config ./internal/storage/sqlite`; expect undefined package/function failures.
