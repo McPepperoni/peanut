@@ -47,9 +47,11 @@ For each transcript, Peanut renders a strict Qwen system prompt containing the c
 
 Go validates JSON, status, step order, device IDs, action IDs, argument types, and required fields before execution. The model may select only capabilities in the supplied snapshot. Multilingual transcripts map to the same stable IDs. Ambiguous requests become `clarify`; unsupported requests become `unknown`.
 
-## Home Assistant provider
+## Home Assistant provider and deployment
 
-Home Assistant runs locally beside Peanut, defaulting to `http://127.0.0.1:8123`. A bearer token comes from configuration, environment, or a secret file and is never stored in SQLite or logs. Discovery uses HA REST state/service APIs. The first provider exposes `music.play` for media-player entities, with source/query/URI arguments. Execution maps only validated requests to `media_player.play_media`; YouTube resolution remains Home Assistant integration detail. HA outages yield `provider_unavailable`.
+Home Assistant is always treated as an external provider. Development may point Peanut at any reachable HA instance, local or remote. For local development only, cloning/running Home Assistant from source is allowed. Production setup asks whether HA already exists. If not, the installer pulls and runs the official Home Assistant Container image with a persistent config volume and host networking; it never clones Home Assistant source. Peanut remains a native process beside the container. The installer supports a detected OCI runtime and fails with a clear prerequisite error when no supported runtime exists.
+
+The provider defaults to `http://127.0.0.1:8123`, but URL and credentials are configurable. A bearer token is stored in SQLite with restrictive database-file permissions and is never returned by the configuration API or written to logs. Discovery uses HA REST state/service APIs. The first provider exposes `music.play` for media-player entities, with source/query/URI arguments. Execution maps only validated requests to `media_player.play_media`; YouTube resolution remains Home Assistant integration detail. HA outages yield `provider_unavailable`.
 
 The provider interface is the plugin seam. V1 uses compiled in-process providers and a fake provider for tests. Dynamic Go loading is excluded because it is fragile across ARM64 builds. A later process plugin can implement the same contract without changing the coordinator or intent schema.
 
@@ -59,14 +61,18 @@ Sherpa-onnx is isolated behind KWS, VAD, STT, speaker, TTS, and playback interfa
 
 Qwen3 `Qwen3-0.6B-Q4_K_M.gguf` is optional only as intent parser input. llama.cpp runs CPU-only with structured JSON grammar, deterministic low-temperature generation, and Qwen `enable_thinking=false` / reasoning disabled. No chat response generation.
 
-## Storage and configuration
+## Storage, configuration, and API
 
-SQLite uses embedded lightweight migrations and stores speakers, embeddings, settings, providers, devices, and capabilities. Audio streams, recordings, TTS buffers, and models stay out of SQLite. Database path, model paths, HA URL/token, audio devices, thresholds, timeouts, pre-roll, acoustic tails, and debug-audio output are centralized in configuration with development overrides.
+SQLite is the configuration source of truth. Embedded lightweight migrations store speakers, embeddings, settings, providers, devices, capabilities, HA connection data, and API auth state. Audio streams, recordings, TTS buffers, and models stay out of SQLite. Database path, model paths, HA URL/token, audio devices, thresholds, timeouts, pre-roll, acoustic tails, and debug-audio output are centralized in configuration; no runtime configuration comes from environment variables.
+
+Peanut exposes a small versioned HTTP configuration API. It supports reading non-secret configuration, setting HA connection details, enabling/disabling providers, refreshing capabilities, and managing generated pairing credentials. It binds to `127.0.0.1` by default. LAN binding is opt-in and requires an auth/pairing token stored in SQLite; secret values are write-only through the API and redacted from responses. Configuration writes are transactional and trigger validation or provider rediscovery where relevant.
 
 ## CLI and testing
 
 Provide minimal commands: `run`, `enroll <id>`, `speak <text>`, `transcribe <wav>`, and `test-audio <wav>`. Use embedded `assets/ack.wav`. File-driven tests exercise WAV -> VAD -> STT -> speaker -> intent -> provider -> TTS where models exist. Unit tests cover state transitions, ring buffer, pre-roll, config, SQLite, intent validation, capability snapshots, timeout recovery, and fake provider routing. Hardware adapters remain separately testable and Pi validation is documented as pending.
 
-## Explicit non-goals
+## Installer and explicit non-goals
 
-No cloud APIs, streaming STT, barge-in, echo cancellation, voice cloning, direct YouTube API, generic plugin marketplace, raw audio persistence, or home-agent reasoning/tool intelligence beyond validated capability plans.
+Installer responsibilities are limited to Peanut setup, model-path configuration, and optional official Home Assistant Container provisioning. It does not install Home Assistant from source or hide container-runtime failures. Development tooling may clone/run Home Assistant locally without Docker.
+
+No cloud APIs, streaming STT, barge-in, echo cancellation, voice cloning, direct YouTube API, generic plugin marketplace, raw audio persistence, environment-based runtime configuration, or home-agent reasoning/tool intelligence beyond validated capability plans.
