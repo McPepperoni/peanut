@@ -1,0 +1,11 @@
+/build/
+/dev/home-assistant-core/
+/local-model/
+/data/
+/app/data/
+*.db
+*.db-shm
+*.db-wal
+/.gocache/
+/.gomodcache/
+*.db-journal
