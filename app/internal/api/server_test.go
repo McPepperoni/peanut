@@ -98,6 +98,7 @@ func TestServerConfigPutCannotOverwritePairingToken(t *testing.T) {
 	db := apiDB(t)
 	store := sqlite.NewConfigStore(db)
 	cfg := loadConfig(t, store)
+	cfg.HomeAssistant.Token = "ha-secret"
 	cfg.API.PairingToken = "pairing-secret"
 	if err := store.Save(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -111,6 +112,9 @@ func TestServerConfigPutCannotOverwritePairingToken(t *testing.T) {
 	}
 	if got := loadConfig(t, store).API.PairingToken; got != "pairing-secret" {
 		t.Fatalf("pairing token = %q", got)
+	}
+	if got := loadConfig(t, store).HomeAssistant.Token; got != "ha-secret" {
+		t.Fatalf("Home Assistant token = %q", got)
 	}
 
 	put = request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"api":{"pairing_token":"attacker-controlled"}}`, "")
