@@ -68,6 +68,60 @@ func TestServerRequiresBearerAuthWhenLANEnabled(t *testing.T) {
 	}
 }
 
+func TestServerKeepsStartupAuthenticationAfterAllowLANUpdate(t *testing.T) {
+	db := apiDB(t)
+	store := sqlite.NewConfigStore(db)
+	cfg := loadConfig(t, store)
+	cfg.API.Address = "0.0.0.0:8080"
+	cfg.API.AllowLAN = true
+	cfg.API.PairingToken = "pairing-secret"
+	if err := store.Save(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, nil)
+
+	updated := request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"api":{"address":"127.0.0.1:8080","allow_lan":false}}`, "pairing-secret")
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updated.Code, updated.Body.String())
+	}
+	unauthorized := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+	authorized := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "pairing-secret")
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("authorized status = %d, body = %s", authorized.Code, authorized.Body.String())
+	}
+}
+
+func TestServerConfigPutCannotOverwritePairingToken(t *testing.T) {
+	db := apiDB(t)
+	store := sqlite.NewConfigStore(db)
+	cfg := loadConfig(t, store)
+	cfg.API.PairingToken = "pairing-secret"
+	if err := store.Save(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, nil)
+
+	get := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
+	put := request(t, server.Handler(), http.MethodPut, "/api/v1/config", get.Body.String(), "")
+	if put.Code != http.StatusBadRequest {
+		t.Fatalf("GET->PUT status = %d, body = %s", put.Code, put.Body.String())
+	}
+	if got := loadConfig(t, store).API.PairingToken; got != "pairing-secret" {
+		t.Fatalf("pairing token = %q", got)
+	}
+
+	put = request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"api":{"pairing_token":"attacker-controlled"}}`, "")
+	if put.Code != http.StatusBadRequest {
+		t.Fatalf("pairing_token status = %d, body = %s", put.Code, put.Body.String())
+	}
+	if got := loadConfig(t, store).API.PairingToken; got != "pairing-secret" {
+		t.Fatalf("pairing token = %q", got)
+	}
+}
+
 func TestServerRejectsLANAddressWithoutLANOptIn(t *testing.T) {
 	db := apiDB(t)
 	server := NewServer(db, nil)

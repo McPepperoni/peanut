@@ -77,6 +77,11 @@ func ValidateSnapshot(snapshot CapabilitySnapshot) error {
 					return fmt.Errorf("invalid argument schema for action %q", action.ID)
 				}
 			}
+			for _, name := range action.ExactlyOneOf {
+				if _, ok := action.Arguments[name]; !ok {
+					return fmt.Errorf("exactly-one argument %q is not declared for action %q", name, action.ID)
+				}
+			}
 		}
 	}
 	return nil
@@ -91,7 +96,7 @@ func validateStep(step ActionRequest, snapshot CapabilitySnapshot) error {
 		deviceFound = true
 		for _, action := range capability.Actions {
 			if action.ID == step.ActionID {
-				return validateArguments(step.Arguments, action.Arguments)
+				return validateArguments(step.Arguments, action.Arguments, action.ExactlyOneOf)
 			}
 		}
 	}
@@ -101,7 +106,7 @@ func validateStep(step ActionRequest, snapshot CapabilitySnapshot) error {
 	return fmt.Errorf("unknown action %q for device %q", step.ActionID, step.DeviceID)
 }
 
-func validateArguments(arguments map[string]any, schema map[string]ArgumentDefinition) error {
+func validateArguments(arguments map[string]any, schema map[string]ArgumentDefinition, exactlyOneOf []string) error {
 	for name, definition := range schema {
 		value, ok := arguments[name]
 		if definition.Required && !ok {
@@ -115,6 +120,15 @@ func validateArguments(arguments map[string]any, schema map[string]ArgumentDefin
 		if _, ok := schema[name]; !ok {
 			return fmt.Errorf("unknown argument %s", name)
 		}
+	}
+	present := 0
+	for _, name := range exactlyOneOf {
+		if _, ok := arguments[name]; ok {
+			present++
+		}
+	}
+	if len(exactlyOneOf) > 0 && present != 1 {
+		return fmt.Errorf("exactly one of %s is required", strings.Join(exactlyOneOf, ", "))
 	}
 	return nil
 }

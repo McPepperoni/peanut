@@ -60,7 +60,7 @@ func (p *HomeAssistantProvider) Discover(ctx context.Context) ([]intent.Capabili
 		if errors.Is(err, ErrProviderUnavailable) {
 			cached, cacheErr := p.capabilities.List(ctx, HomeAssistantProviderID)
 			if cacheErr == nil && len(cached) > 0 {
-				return cached, nil
+				return cached, err
 			}
 		}
 		return nil, err
@@ -81,7 +81,8 @@ func (p *HomeAssistantProvider) Discover(ctx context.Context) ([]intent.Capabili
 			Type:       "music",
 			Name:       name,
 			Actions: []intent.ActionDefinition{{
-				ID: "music.play",
+				ID:           "music.play",
+				ExactlyOneOf: []string{"query", "uri"},
 				Arguments: map[string]intent.ArgumentDefinition{
 					"query":  {Type: intent.TypeString},
 					"uri":    {Type: intent.TypeString},

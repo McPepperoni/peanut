@@ -55,7 +55,8 @@ func TestValidatePlanRejectsInvalidCapabilityUse(t *testing.T) {
 		{"unknown device", func(plan *ActionPlan) { plan.Steps[0].DeviceID = "device.missing" }, "unknown device"},
 		{"unknown action", func(plan *ActionPlan) { plan.Steps[0].ActionID = "media.delete" }, "unknown action"},
 		{"bad argument type", func(plan *ActionPlan) { plan.Steps[0].Arguments["query"] = 42.0 }, "argument query"},
-		{"missing required argument", func(plan *ActionPlan) { delete(plan.Steps[0].Arguments, "query") }, "required argument query"},
+		{"missing exactly-one argument", func(plan *ActionPlan) { delete(plan.Steps[0].Arguments, "query") }, "exactly one"},
+		{"both exactly-one arguments", func(plan *ActionPlan) { plan.Steps[0].Arguments["uri"] = "https://example.com/song.mp3" }, "exactly one"},
 		{"undeclared argument", func(plan *ActionPlan) { plan.Steps[0].Arguments["provider_payload"] = true }, "unknown argument"},
 	}
 	for _, tt := range tests {
@@ -68,6 +69,20 @@ func TestValidatePlanRejectsInvalidCapabilityUse(t *testing.T) {
 				t.Fatalf("error = %v, want containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidatePlanAcceptsEitherExactlyOneArgument(t *testing.T) {
+	for _, arguments := range []map[string]any{
+		{"query": "Blue in Green"},
+		{"uri": "https://example.com/song.mp3"},
+	} {
+		plan := ActionPlan{Version: 1, Status: StatusExecute, Language: "en", Confidence: 0.8, Steps: []ActionRequest{{
+			DeviceID: "device.living-room", ActionID: "media.play", Arguments: arguments,
+		}}}
+		if err := ValidatePlan(plan, testSnapshot()); err != nil {
+			t.Fatalf("arguments = %#v, error = %v", arguments, err)
+		}
 	}
 }
 
@@ -101,7 +116,7 @@ func testSnapshot() CapabilitySnapshot {
 		ID: "capability.living-room-media", ProviderID: "provider.local", DeviceID: "device.living-room",
 		Type: "media", Name: "Living room speaker", Room: "Living room",
 		Actions: []ActionDefinition{
-			{ID: "media.play", Arguments: map[string]ArgumentDefinition{"query": {Type: TypeString, Required: true}}},
+			{ID: "media.play", Arguments: map[string]ArgumentDefinition{"query": {Type: TypeString}, "uri": {Type: TypeString}}, ExactlyOneOf: []string{"query", "uri"}},
 			{ID: "media.volume", Arguments: map[string]ArgumentDefinition{"level": {Type: TypeNumber, Required: true}}},
 		},
 	}}}

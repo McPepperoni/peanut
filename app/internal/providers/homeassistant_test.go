@@ -47,11 +47,15 @@ func TestHomeAssistantDiscoverAuthenticatesAndCachesMediaPlayers(t *testing.T) {
 	if len(capability.Actions) != 1 || capability.Actions[0].ID != "music.play" {
 		t.Fatalf("actions = %#v", capability.Actions)
 	}
+	group := capability.Actions[0].ExactlyOneOf
+	if len(group) != 2 || group[0] != "query" || group[1] != "uri" {
+		t.Fatalf("exactly one group = %#v", group)
+	}
 
 	server.Close()
 	cached, err := provider.Discover(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrProviderUnavailable) {
+		t.Fatalf("error = %v, want provider unavailable", err)
 	}
 	if len(cached) != 1 || cached[0].DeviceID != capability.DeviceID {
 		t.Fatalf("cached capabilities = %#v", cached)

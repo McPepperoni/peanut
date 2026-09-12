@@ -21,13 +21,17 @@ type Refresher interface {
 }
 
 type Server struct {
-	config    *sqlite.ConfigStore
-	refresher Refresher
-	handler   http.Handler
+	config      *sqlite.ConfigStore
+	refresher   Refresher
+	handler     http.Handler
+	requireAuth bool
 }
 
 func NewServer(db *sqlite.DB, refresher Refresher) *Server {
 	server := &Server{config: sqlite.NewConfigStore(db), refresher: refresher}
+	if cfg, err := server.load(context.Background()); err == nil {
+		server.requireAuth = cfg.API.AllowLAN
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/config", server.handleConfig)
 	mux.HandleFunc("/api/v1/config/pairing-token", server.handlePairingToken)
@@ -50,7 +54,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, "configuration unavailable")
 			return
 		}
-		if cfg.API.AllowLAN {
+		if s.requireAuth {
 			provided := ""
 			const prefix = "Bearer "
 			if value := r.Header.Get("Authorization"); len(value) > len(prefix) && value[:len(prefix)] == prefix {
@@ -89,9 +93,8 @@ type configUpdate struct {
 		TimeoutSeconds *int64  `json:"timeout_seconds"`
 	} `json:"home_assistant"`
 	API *struct {
-		Address      *string `json:"address"`
-		AllowLAN     *bool   `json:"allow_lan"`
-		PairingToken *string `json:"pairing_token"`
+		Address  *string `json:"address"`
+		AllowLAN *bool   `json:"allow_lan"`
 	} `json:"api"`
 }
 
@@ -127,9 +130,6 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if update.API.AllowLAN != nil {
 			cfg.API.AllowLAN = *update.API.AllowLAN
-		}
-		if update.API.PairingToken != nil {
-			cfg.API.PairingToken = *update.API.PairingToken
 		}
 	}
 	if err := cfg.Validate(); err != nil {

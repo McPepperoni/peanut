@@ -28,8 +28,9 @@ type ArgumentDefinition struct {
 }
 
 type ActionDefinition struct {
-	ID        string                        `json:"id"`
-	Arguments map[string]ArgumentDefinition `json:"arguments,omitempty"`
+	ID           string                        `json:"id"`
+	Arguments    map[string]ArgumentDefinition `json:"arguments,omitempty"`
+	ExactlyOneOf []string                      `json:"exactly_one_of,omitempty"`
 }
 
 type Capability struct {
