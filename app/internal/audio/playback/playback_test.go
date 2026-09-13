@@ -1,0 +1,33 @@
+package playback
+
+import (
+	"bytes"
+	"context"
+	"testing"
+
+	"peanut/internal/audio"
+)
+
+func TestPlayWAVRoutesDecodedAudioToPlayer(t *testing.T) {
+	want, err := audio.NewAudio(audio.SampleRate, audio.Channels, []float32{0, 0.5, -0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wav bytes.Buffer
+	if err := audio.WriteWAV(&wav, want); err != nil {
+		t.Fatal(err)
+	}
+	player := &Fake{}
+	if err := PlayWAV(context.Background(), player, bytes.NewReader(wav.Bytes())); err != nil {
+		t.Fatal(err)
+	}
+	if len(player.Played) != 1 || len(player.Played[0].Samples) != len(want.Samples) {
+		t.Fatalf("played = %+v", player.Played)
+	}
+}
+
+func TestFakePlayerRejectsInvalidAudio(t *testing.T) {
+	if err := (&Fake{}).Play(context.Background(), audio.Audio{}); err == nil {
+		t.Fatal("Fake.Play accepted invalid audio")
+	}
+}

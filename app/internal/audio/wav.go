@@ -69,29 +69,51 @@ func ReadWAV(r io.Reader) (Audio, error) {
 		}
 		offset = end + size%2
 	}
-	if rate != SampleRate || channels != Channels || (format != 1 && format != 3) {
-		return Audio{}, errors.New("WAV must be 16 kHz mono PCM or float32")
+	if rate == 0 || channels == 0 || (format != 1 && format != 3) {
+		return Audio{}, errors.New("WAV must use PCM or float32 samples")
 	}
-	var samples []float32
+	var encoded []float32
 	switch {
 	case format == 3 && bits == 32:
-		if len(data)%4 != 0 {
+		if len(data)%4 != 0 || len(data)/4%int(channels) != 0 {
 			return Audio{}, errors.New("invalid float32 WAV data")
 		}
-		samples = make([]float32, len(data)/4)
-		for i := range samples {
-			samples[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[i*4:]))
+		encoded = make([]float32, len(data)/4)
+		for i := range encoded {
+			encoded[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[i*4:]))
 		}
 	case format == 1 && bits == 16:
-		if len(data)%2 != 0 {
+		if len(data)%2 != 0 || len(data)/2%int(channels) != 0 {
 			return Audio{}, errors.New("invalid PCM16 WAV data")
 		}
-		samples = make([]float32, len(data)/2)
-		for i := range samples {
-			samples[i] = float32(int16(binary.LittleEndian.Uint16(data[i*2:]))) / 32768
+		encoded = make([]float32, len(data)/2)
+		for i := range encoded {
+			encoded[i] = float32(int16(binary.LittleEndian.Uint16(data[i*2:]))) / 32768
 		}
 	default:
 		return Audio{}, errors.New("WAV must use 16-bit PCM or 32-bit float samples")
 	}
-	return NewAudio(int(rate), int(channels), samples)
+	frames := len(encoded) / int(channels)
+	mono := make([]float32, frames)
+	for frame := range mono {
+		for channel := 0; channel < int(channels); channel++ {
+			mono[frame] += encoded[frame*int(channels)+channel] / float32(channels)
+		}
+	}
+	outputFrames := int(uint64(frames) * SampleRate / uint64(rate))
+	if outputFrames == 0 && frames > 0 {
+		outputFrames = 1
+	}
+	samples := make([]float32, outputFrames)
+	for index := range samples {
+		position := float64(index) * float64(rate) / SampleRate
+		left := int(position)
+		if left >= frames-1 {
+			samples[index] = mono[frames-1]
+			continue
+		}
+		fraction := float32(position - float64(left))
+		samples[index] = mono[left]*(1-fraction) + mono[left+1]*fraction
+	}
+	return NewAudio(SampleRate, Channels, samples)
 }
