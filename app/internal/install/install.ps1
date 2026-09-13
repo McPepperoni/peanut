@@ -17,6 +17,10 @@ try {
 } finally {
     Pop-Location
 }
+Start-Process -WindowStyle Hidden -FilePath $Binary -ArgumentList 'api'
+for ($i = 0; $i -lt 10; $i++) {
+    try { Invoke-WebRequest -UseBasicParsing -Uri $Api -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Seconds 1 }
+}
 
 $HasHA = Read-Host 'Do you already have Home Assistant? [y/N]'
 if ($HasHA -match '^(?i:y|yes)$') {

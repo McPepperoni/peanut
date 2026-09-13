@@ -13,6 +13,11 @@ command -v go >/dev/null 2>&1 || { echo "go is required" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 mkdir -p "$ROOT_DIR/build"
 (cd "$APP_DIR" && go build -o "$ROOT_DIR/build/peanut" ./cmd/peanut)
+"$ROOT_DIR/build/peanut" api >/dev/null 2>&1 &
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl --silent --fail "$API" >/dev/null 2>&1 && break
+  sleep 1
+done
 
 printf "Do you already have Home Assistant? [y/N] "
 IFS= read -r HAS_HA

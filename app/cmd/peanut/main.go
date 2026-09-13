@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
+	"net/http"
 	"os"
 
+	"peanut/internal/api"
 	"peanut/internal/config"
+	"peanut/internal/providers"
 	"peanut/internal/storage/sqlite"
 )
 
@@ -28,6 +32,9 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 	if err := config.PersistDefaults(ctx, db); err != nil {
 		return err
 	}
+	if len(args) > 1 && args[1] == "api" {
+		return serveAPI(ctx, db)
+	}
 	if _, err := config.Load(databasePath); err != nil {
 		return err
 	}
@@ -38,4 +45,22 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 		args = args[1:]
 	}
 	return dispatch(ctx, args, dependencies, output)
+}
+
+func serveAPI(ctx context.Context, db *sqlite.DB) error {
+	provider := providers.NewHomeAssistantProvider(db, nil)
+	server := api.NewServer(db, provider)
+	address, err := server.Address(ctx)
+	if err != nil {
+		return err
+	}
+	httpServer := &http.Server{Addr: address, Handler: server.Handler()}
+	go func() {
+		<-ctx.Done()
+		_ = httpServer.Shutdown(context.Background())
+	}()
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }

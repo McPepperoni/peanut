@@ -129,6 +129,31 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 	if err := intent.ValidatePlan(plan, c.deps.Capabilities); err != nil {
 		return err
 	}
+	if plan.Status != intent.StatusExecute {
+		message := "I don't know."
+		if plan.Status == intent.StatusClarify {
+			message = plan.Clarification
+		}
+		response, err := c.deps.Synthesizer.Synthesize(ctx, message)
+		if err != nil {
+			return err
+		}
+		if err := response.Validate(); err != nil {
+			return err
+		}
+		if err := c.machine.Transition(ProcessingFinished); err != nil {
+			return err
+		}
+		if err := c.machine.Transition(SynthesisFinished); err != nil {
+			return err
+		}
+		if err := c.deps.Player.Play(ctx, response.Audio); err != nil {
+			return err
+		}
+		_ = c.deps.WakeDetector.Reset()
+		_ = c.deps.VAD.Reset()
+		return c.machine.Transition(PlaybackFinished)
+	}
 	for _, step := range plan.Steps {
 		var executed bool
 		for _, capability := range c.deps.Capabilities.Capabilities {
@@ -165,6 +190,8 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 	if err := c.deps.Player.Play(ctx, response.Audio); err != nil {
 		return err
 	}
+	_ = c.deps.WakeDetector.Reset()
+	_ = c.deps.VAD.Reset()
 	return c.machine.Transition(PlaybackFinished)
 }
 
