@@ -37,6 +37,7 @@ type Profile struct {
 	Threads int    `json:"threads"`
 	Valid   bool   `json:"valid"`
 	Error   string `json:"error"`
+	Active  bool   `json:"-"`
 }
 
 type manifest struct {
@@ -78,24 +79,31 @@ func (r *Registry) Scan(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	r.mu.RLock()
-	active := cloneActive(r.active)
-	r.mu.RUnlock()
-	selected := make(map[Role]bool)
-	for _, profile := range profiles {
-		if profile.Valid && !selected[profile.Role] {
-			active[profile.Role] = profile
-			selected[profile.Role] = true
-		}
-	}
-	snapshot := Snapshot{Profiles: profiles, Active: active}
 	var previous []Profile
 	if r.store != nil {
 		previous, err = r.store.List(ctx)
 		if err != nil {
-			return snapshot, fmt.Errorf("load stored model snapshot: %w", err)
+			return Snapshot{}, fmt.Errorf("load stored model snapshot: %w", err)
 		}
-		if err := r.store.ReplaceSnapshot(ctx, profiles); err != nil {
+	}
+	r.mu.RLock()
+	active := cloneActive(r.active)
+	r.mu.RUnlock()
+	for _, profile := range previous {
+		if profile.Active {
+			if _, ok := active[profile.Role]; !ok {
+				active[profile.Role] = profile
+			}
+		}
+	}
+	normalizeProfiles(profiles, active)
+	selected := selectProfiles(profiles)
+	for role, profile := range selected {
+		active[role] = profile
+	}
+	snapshot := Snapshot{Profiles: profiles, Active: active}
+	if r.store != nil {
+		if err := r.store.ReplaceSnapshot(ctx, persistedProfiles(profiles, active)); err != nil {
 			return snapshot, fmt.Errorf("store model snapshot: %w", err)
 		}
 	}
@@ -149,13 +157,103 @@ func scan(root string) ([]Profile, error) {
 			profiles = append(profiles, readProfile(root, roleDirectory.Name(), profilePath, manifestPath))
 		}
 	}
-	for i := range profiles {
-		if profiles[i].ID == "" {
-			profiles[i].ID = "invalid:" + profiles[i].Path
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Path < profiles[j].Path })
+	return profiles, nil
+}
+
+func normalizeProfiles(profiles []Profile, persisted map[Role]Profile) {
+	byID := make(map[string][]int)
+	for i, profile := range profiles {
+		if profile.ID != "" {
+			byID[profile.ID] = append(byID[profile.ID], i)
 		}
 	}
+	for id, indexes := range byID {
+		if len(indexes) < 2 {
+			continue
+		}
+		for _, index := range indexes {
+			profiles[index].Valid = false
+			profiles[index].Error = fmt.Sprintf("duplicate model id %q", id)
+		}
+	}
+	for {
+		selected := selectProfiles(profiles)
+		retained := make(map[string]Profile)
+		for role, profile := range persisted {
+			if _, replaced := selected[role]; !replaced {
+				retained[profile.ID] = profile
+			}
+		}
+		changed := false
+		for i := range profiles {
+			if prior, collides := retained[profiles[i].ID]; profiles[i].Valid && collides && prior.Role != profiles[i].Role {
+				profiles[i].Valid = false
+				profiles[i].Error = fmt.Sprintf("model id %q conflicts with active role %q", profiles[i].ID, prior.Role)
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	used := make(map[string]bool)
+	for _, profile := range profiles {
+		if profile.Valid {
+			used[profile.ID] = true
+		}
+	}
+	selected := selectProfiles(profiles)
+	for role, profile := range persisted {
+		if _, replaced := selected[role]; !replaced {
+			used[profile.ID] = true
+		}
+	}
+	for i := range profiles {
+		if profiles[i].Valid {
+			continue
+		}
+		base := "invalid:" + profiles[i].Path
+		profiles[i].ID = base
+		for suffix := 2; used[profiles[i].ID]; suffix++ {
+			profiles[i].ID = fmt.Sprintf("%s#%d", base, suffix)
+		}
+		used[profiles[i].ID] = true
+	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].ID < profiles[j].ID })
-	return profiles, nil
+}
+
+func selectProfiles(profiles []Profile) map[Role]Profile {
+	selected := make(map[Role]Profile)
+	for _, profile := range profiles {
+		if _, exists := selected[profile.Role]; profile.Valid && !exists {
+			selected[profile.Role] = profile
+		}
+	}
+	return selected
+}
+
+func persistedProfiles(profiles []Profile, active map[Role]Profile) []Profile {
+	persisted := append([]Profile(nil), profiles...)
+	byID := make(map[string]int, len(persisted))
+	for i := range persisted {
+		persisted[i].Active = false
+		byID[persisted[i].ID] = i
+	}
+	for _, role := range []Role{RoleKWS, RoleVAD, RoleSTT, RoleSpeaker, RoleTTS, RoleIntent} {
+		profile, ok := active[role]
+		if !ok {
+			continue
+		}
+		profile.Active = true
+		if index, exists := byID[profile.ID]; exists {
+			persisted[index].Active = true
+		} else {
+			byID[profile.ID] = len(persisted)
+			persisted = append(persisted, profile)
+		}
+	}
+	return persisted
 }
 
 func readProfile(root, directoryRole, profilePath, manifestPath string) Profile {

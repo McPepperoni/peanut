@@ -77,9 +77,9 @@ func TestRegistryValidatesStrictManifestAndChecksum(t *testing.T) {
 	}
 	valid := map[string]bool{}
 	for _, profile := range snapshot.Profiles {
-		valid[profile.ID] = profile.Valid
+		valid[profile.Path] = profile.Valid
 	}
-	if !valid["good"] || valid["bad-checksum"] || valid["unknown-field"] {
+	if !valid["intent/good"] || valid["intent/bad-checksum"] || valid["intent/unknown-field"] {
 		t.Fatalf("validity = %#v", valid)
 	}
 }
@@ -168,6 +168,35 @@ func TestRegistryAssignsUniqueIDsToInvalidProfiles(t *testing.T) {
 		if profile.Valid {
 			t.Fatalf("missing-id profile marked valid: %#v", profile)
 		}
+	}
+}
+
+func TestRegistryResolvesManifestAndSyntheticIDCollisions(t *testing.T) {
+	root := t.TempDir()
+	writeModelManifest(t, root, "intent/missing", `{"role":"intent","runtime":"local","entry":"model.gguf"}`)
+	writeModelManifest(t, root, "tts/claimed", `{"id":"invalid:intent/missing","role":"tts","runtime":"local","entry":"model.gguf"}`)
+	writeModelManifest(t, root, "stt/first", `{"id":"duplicate","role":"stt","runtime":"local","entry":"model.gguf"}`)
+	writeModelManifest(t, root, "vad/second", `{"id":"duplicate","role":"vad","runtime":"local","entry":"model.gguf"}`)
+	store := &fakeModelStore{}
+
+	snapshot, err := NewRegistry(root, store, nil).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool)
+	for _, profile := range snapshot.Profiles {
+		if profile.ID == "" || seen[profile.ID] {
+			t.Fatalf("colliding profile identity: %#v", snapshot.Profiles)
+		}
+		seen[profile.ID] = true
+		if profile.Path == "stt/first" || profile.Path == "vad/second" {
+			if profile.Valid {
+				t.Fatalf("duplicate supplied ID remained valid: %#v", profile)
+			}
+		}
+	}
+	if len(store.profiles) != 4 {
+		t.Fatalf("stored profiles = %#v", store.profiles)
 	}
 }
 
