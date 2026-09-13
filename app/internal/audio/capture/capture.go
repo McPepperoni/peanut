@@ -9,6 +9,14 @@ import (
 	"peanut/internal/audio"
 )
 
+var ErrUnsupported = errors.New("system audio capture is unsupported")
+
+type SystemCapture struct{}
+
+func (SystemCapture) Capture(context.Context) (<-chan audio.Frame, error) {
+	return nil, ErrUnsupported
+}
+
 type File struct{ path string }
 
 func NewFile(path string) *File { return &File{path: path} }
@@ -38,15 +46,19 @@ func (f *File) Capture(ctx context.Context) (<-chan audio.Frame, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(input.Samples)%audio.FrameSamples != 0 {
-		return nil, errors.New("WAV samples must align to audio frames")
-	}
-	frames := make(chan audio.Frame, len(input.Samples)/audio.FrameSamples)
+	frames := make(chan audio.Frame, (len(input.Samples)+audio.FrameSamples-1)/audio.FrameSamples)
 	for offset := 0; offset < len(input.Samples); offset += audio.FrameSamples {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		frame, err := audio.NewFrame(input.Samples[offset : offset+audio.FrameSamples])
+		end := min(offset+audio.FrameSamples, len(input.Samples))
+		samples := input.Samples[offset:end]
+		if len(samples) < audio.FrameSamples {
+			padded := make([]float32, audio.FrameSamples)
+			copy(padded, samples)
+			samples = padded
+		}
+		frame, err := audio.NewFrame(samples)
 		if err != nil {
 			return nil, err
 		}

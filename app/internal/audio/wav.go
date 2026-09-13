@@ -8,6 +8,9 @@ import (
 	"math"
 )
 
+// MaxWAVBytes bounds untrusted WAV input before sample buffers are allocated.
+const MaxWAVBytes = 64 << 20
+
 func WriteWAV(w io.Writer, audio Audio) error {
 	if audio.SampleRate != SampleRate || audio.Channels != Channels {
 		return errors.New("audio must be 16 kHz mono")
@@ -39,9 +42,12 @@ func WriteWAV(w io.Writer, audio Audio) error {
 }
 
 func ReadWAV(r io.Reader) (Audio, error) {
-	b, err := io.ReadAll(r)
+	b, err := io.ReadAll(io.LimitReader(r, MaxWAVBytes+1))
 	if err != nil {
 		return Audio{}, fmt.Errorf("read WAV: %w", err)
+	}
+	if len(b) > MaxWAVBytes {
+		return Audio{}, errors.New("WAV exceeds 64 MiB limit")
 	}
 	if len(b) < 44 || string(b[0:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
 		return Audio{}, errors.New("invalid WAV header")
@@ -105,6 +111,19 @@ func ReadWAV(r io.Reader) (Audio, error) {
 		outputFrames = 1
 	}
 	samples := make([]float32, outputFrames)
+	if rate > SampleRate {
+		step := float64(rate) / SampleRate
+		for index := range samples {
+			start := float64(index) * step
+			end := math.Min(float64(frames), float64(index+1)*step)
+			width := end - start
+			for source := int(start); source < int(math.Ceil(end)); source++ {
+				overlap := math.Min(end, float64(source+1)) - math.Max(start, float64(source))
+				samples[index] += mono[source] * float32(overlap/width)
+			}
+		}
+		return NewAudio(SampleRate, Channels, samples)
+	}
 	for index := range samples {
 		position := float64(index) * float64(rate) / SampleRate
 		left := int(position)
