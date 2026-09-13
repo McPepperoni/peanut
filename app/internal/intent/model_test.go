@@ -29,9 +29,9 @@ func (f *fakeInferenceRunner) Run(ctx context.Context, executable string, args [
 	return f.output, f.err
 }
 
-func TestQwenParserPromptIncludesTranscriptAndCapabilities(t *testing.T) {
+func TestModelParserPromptIncludesTranscriptAndCapabilities(t *testing.T) {
 	runner := &fakeInferenceRunner{output: []byte(validPlanJSON)}
-	parser := newQwenParser("llama-cli", "model.gguf", 4, time.Second, runner)
+	parser := newModelParser("llama-cli", "model.gguf", 4, time.Second, runner)
 
 	if _, err := parser.Parse(context.Background(), "play jazz", testSnapshot()); err != nil {
 		t.Fatal(err)
@@ -44,9 +44,9 @@ func TestQwenParserPromptIncludesTranscriptAndCapabilities(t *testing.T) {
 	}
 }
 
-func TestQwenParserUsesCPUOnlyDeterministicNoThinkingFlags(t *testing.T) {
+func TestModelParserUsesCPUOnlyDeterministicNoThinkingFlags(t *testing.T) {
 	runner := &fakeInferenceRunner{output: []byte(validPlanJSON)}
-	parser := newQwenParser("llama-cli", "model.gguf", 3, time.Second, runner)
+	parser := newModelParser("llama-cli", "model.gguf", 3, time.Second, runner)
 
 	if _, err := parser.Parse(context.Background(), "play jazz", testSnapshot()); err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestQwenParserUsesCPUOnlyDeterministicNoThinkingFlags(t *testing.T) {
 	}
 }
 
-func TestQwenParserSchemaAllowsCapabilityArguments(t *testing.T) {
+func TestModelParserSchemaAllowsCapabilityArguments(t *testing.T) {
 	snapshot := CapabilitySnapshot{Capabilities: []Capability{{
 		ID: "capability.media", ProviderID: "provider.local", DeviceID: "device.media",
 		Type: "media", Name: "Media player", Actions: []ActionDefinition{{
@@ -85,7 +85,7 @@ func TestQwenParserSchemaAllowsCapabilityArguments(t *testing.T) {
 	}}}
 	output := `{"version":1,"status":"execute","language":"en","steps":[{"device_id":"device.media","action_id":"media.play","arguments":{"query":"jazz","source":"library"}}],"clarification":"","confidence":0.9}`
 	runner := &fakeInferenceRunner{output: []byte(output)}
-	parser := newQwenParser("llama-cli", "model.gguf", 1, time.Second, runner)
+	parser := newModelParser("llama-cli", "model.gguf", 1, time.Second, runner)
 
 	plan, err := parser.Parse(context.Background(), "play jazz from my library", snapshot)
 	if err != nil {
@@ -105,9 +105,9 @@ func TestQwenParserSchemaAllowsCapabilityArguments(t *testing.T) {
 	}
 }
 
-func TestQwenParserExtractsOnlyJSONPlan(t *testing.T) {
+func TestModelParserExtractsOnlyJSONPlan(t *testing.T) {
 	runner := &fakeInferenceRunner{output: []byte("model output:\n```json\n" + validPlanJSON + "\n```\n")}
-	parser := newQwenParser("llama-cli", "model.gguf", 1, time.Second, runner)
+	parser := newModelParser("llama-cli", "model.gguf", 1, time.Second, runner)
 
 	plan, err := parser.Parse(context.Background(), "play jazz", testSnapshot())
 	if err != nil {
@@ -118,18 +118,18 @@ func TestQwenParserExtractsOnlyJSONPlan(t *testing.T) {
 	}
 }
 
-func TestQwenParserRejectsMalformedOutput(t *testing.T) {
+func TestModelParserRejectsMalformedOutput(t *testing.T) {
 	runner := &fakeInferenceRunner{output: []byte("```json\n{not json}\n```")}
-	parser := newQwenParser("llama-cli", "model.gguf", 1, time.Second, runner)
+	parser := newModelParser("llama-cli", "model.gguf", 1, time.Second, runner)
 
 	if _, err := parser.Parse(context.Background(), "play jazz", testSnapshot()); err == nil || !strings.Contains(err.Error(), "JSON") {
 		t.Fatalf("error = %v, want malformed JSON error", err)
 	}
 }
 
-func TestQwenParserHonorsTimeout(t *testing.T) {
+func TestModelParserHonorsTimeout(t *testing.T) {
 	runner := &fakeInferenceRunner{wait: true}
-	parser := newQwenParser("llama-cli", "model.gguf", 1, time.Millisecond, runner)
+	parser := newModelParser("llama-cli", "model.gguf", 1, time.Millisecond, runner)
 
 	_, err := parser.Parse(context.Background(), "play jazz", testSnapshot())
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -137,10 +137,10 @@ func TestQwenParserHonorsTimeout(t *testing.T) {
 	}
 }
 
-func TestQwenParserRejectsInventedCapability(t *testing.T) {
+func TestModelParserRejectsInventedCapability(t *testing.T) {
 	output := `{"version":1,"status":"execute","language":"en","steps":[{"device_id":"device.invented","action_id":"media.play","arguments":{"query":"jazz"}}],"clarification":"","confidence":0.9}`
 	runner := &fakeInferenceRunner{output: []byte(output)}
-	parser := newQwenParser("llama-cli", "model.gguf", 1, time.Second, runner)
+	parser := newModelParser("llama-cli", "model.gguf", 1, time.Second, runner)
 
 	if _, err := parser.Parse(context.Background(), "play jazz", testSnapshot()); err == nil || !strings.Contains(err.Error(), "unknown device") {
 		t.Fatalf("error = %v, want unknown device", err)

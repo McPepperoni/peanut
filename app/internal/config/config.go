@@ -39,15 +39,9 @@ type Audio struct {
 }
 
 type Models struct {
-	WakeWordPath string
-	VADPath      string
-	STTPath      string
-	SpeakerPath  string
-	TTSPath      string
-	IntentPath   string
-	LlamaPath    string
-	Threads      int
-	CPUOnly      bool
+	Root    string
+	Threads int
+	CPUOnly bool
 }
 
 type HomeAssistant struct {
@@ -112,15 +106,9 @@ func defaultConfig() Config {
 			DebugAudioPath:         "data/debug-audio",
 		},
 		Models: Models{
-			WakeWordPath: "local-model/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01-mobile",
-			VADPath:      "local-model/silero_vad.onnx",
-			STTPath:      "local-model/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
-			SpeakerPath:  "local-model/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
-			TTSPath:      "local-model/vits-piper-en_GB-cori-medium",
-			IntentPath:   "local-model/Qwen3-0.6B-Q4_K_M.gguf",
-			LlamaPath:    "llama-cli",
-			Threads:      4,
-			CPUOnly:      true,
+			Root:    "models",
+			Threads: 4,
+			CPUOnly: true,
 		},
 		HomeAssistant: HomeAssistant{
 			URL:     "http://127.0.0.1:8123",
@@ -137,7 +125,7 @@ func (cfg Config) Validate() error {
 	if cfg.Audio.AcknowledgementTail < 0 || cfg.Audio.PlaybackTail < 0 || cfg.Audio.VADThreshold <= 0 || cfg.Audio.VADThreshold > 1 || cfg.Audio.NoSpeechTimeout <= 0 || cfg.Audio.MaximumCommandDuration <= 0 {
 		return errors.New("invalid audio detection config")
 	}
-	if cfg.Models.WakeWordPath == "" || cfg.Models.VADPath == "" || cfg.Models.STTPath == "" || cfg.Models.SpeakerPath == "" || cfg.Models.TTSPath == "" || cfg.Models.IntentPath == "" || cfg.Models.LlamaPath == "" || cfg.Models.Threads <= 0 || !cfg.Models.CPUOnly {
+	if cfg.Models.Root == "" || cfg.Models.Threads <= 0 || !cfg.Models.CPUOnly {
 		return errors.New("invalid model config")
 	}
 	haURL, err := url.ParseRequestURI(cfg.HomeAssistant.URL)

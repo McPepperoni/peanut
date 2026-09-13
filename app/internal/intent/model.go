@@ -18,7 +18,7 @@ type inferenceRunner interface {
 	Run(ctx context.Context, executable string, args []string) ([]byte, error)
 }
 
-type QwenParser struct {
+type ModelParser struct {
 	executable string
 	modelPath  string
 	threads    int
@@ -26,15 +26,15 @@ type QwenParser struct {
 	runner     inferenceRunner
 }
 
-func NewQwenParser(executable, modelPath string, threads int, timeout time.Duration) *QwenParser {
-	return newQwenParser(executable, modelPath, threads, timeout, commandRunner{})
+func NewModelParser(executable, modelPath string, threads int, timeout time.Duration) *ModelParser {
+	return newModelParser(executable, modelPath, threads, timeout, commandRunner{})
 }
 
-func newQwenParser(executable, modelPath string, threads int, timeout time.Duration, runner inferenceRunner) *QwenParser {
-	return &QwenParser{executable: executable, modelPath: modelPath, threads: threads, timeout: timeout, runner: runner}
+func newModelParser(executable, modelPath string, threads int, timeout time.Duration, runner inferenceRunner) *ModelParser {
+	return &ModelParser{executable: executable, modelPath: modelPath, threads: threads, timeout: timeout, runner: runner}
 }
 
-func (p *QwenParser) Parse(ctx context.Context, transcript string, snapshot CapabilitySnapshot) (ActionPlan, error) {
+func (p *ModelParser) Parse(ctx context.Context, transcript string, snapshot CapabilitySnapshot) (ActionPlan, error) {
 	if err := ValidateSnapshot(snapshot); err != nil {
 		return ActionPlan{}, fmt.Errorf("invalid capability snapshot: %w", err)
 	}
@@ -67,7 +67,7 @@ func (p *QwenParser) Parse(ctx context.Context, transcript string, snapshot Capa
 		"--n-predict", "512",
 	})
 	if err != nil {
-		return ActionPlan{}, fmt.Errorf("run Qwen inference: %w", err)
+		return ActionPlan{}, fmt.Errorf("run intent model: %w", err)
 	}
 	data, err := extractJSONObject(output)
 	if err != nil {
@@ -75,10 +75,10 @@ func (p *QwenParser) Parse(ctx context.Context, transcript string, snapshot Capa
 	}
 	plan, err := DecodePlan(data)
 	if err != nil {
-		return ActionPlan{}, fmt.Errorf("parse Qwen JSON: %w", err)
+		return ActionPlan{}, fmt.Errorf("parse intent model JSON: %w", err)
 	}
 	if err := ValidatePlan(plan, snapshot); err != nil {
-		return ActionPlan{}, fmt.Errorf("validate Qwen plan: %w", err)
+		return ActionPlan{}, fmt.Errorf("validate intent model plan: %w", err)
 	}
 	return plan, nil
 }
@@ -86,7 +86,7 @@ func (p *QwenParser) Parse(ctx context.Context, transcript string, snapshot Capa
 func extractJSONObject(output []byte) ([]byte, error) {
 	start := bytes.IndexByte(output, '{')
 	if start < 0 {
-		return nil, fmt.Errorf("Qwen output contains no JSON object")
+		return nil, fmt.Errorf("intent model output contains no JSON object")
 	}
 	depth, inString, escaped := 0, false, false
 	for i := start; i < len(output); i++ {
@@ -106,7 +106,7 @@ func extractJSONObject(output []byte) ([]byte, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("Qwen output contains incomplete JSON object")
+	return nil, fmt.Errorf("intent model output contains incomplete JSON object")
 }
 
 type commandRunner struct{}
@@ -128,4 +128,4 @@ func (commandRunner) Run(ctx context.Context, executable string, args []string) 
 	return output, nil
 }
 
-var _ IntentParser = (*QwenParser)(nil)
+var _ IntentParser = (*ModelParser)(nil)

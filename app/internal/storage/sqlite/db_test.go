@@ -18,7 +18,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, table := range []string{"schema_migrations", "settings", "speakers", "providers", "devices", "capabilities"} {
+	for _, table := range []string{"schema_migrations", "settings", "speakers", "providers", "devices", "capabilities", "models"} {
 		var found string
 		err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&found)
 		if err != nil {

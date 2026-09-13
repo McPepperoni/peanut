@@ -38,6 +38,9 @@ func TestLoadDefaultsAreValid(t *testing.T) {
 	if cfg.API.Address != "127.0.0.1:8080" {
 		t.Fatalf("API address = %q", cfg.API.Address)
 	}
+	if cfg.Models.Root != "models" || cfg.Models.Threads != 4 || !cfg.Models.CPUOnly {
+		t.Fatalf("model config = %+v", cfg.Models)
+	}
 }
 
 func TestPersistDefaultsDoesNotReplaceStoredConfig(t *testing.T) {

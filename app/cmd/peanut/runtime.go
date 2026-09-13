@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"peanut/assets"
 	"peanut/internal/audio"
@@ -12,6 +13,7 @@ import (
 	"peanut/internal/intent"
 	"peanut/internal/ml"
 	"peanut/internal/ml/sherpa"
+	"peanut/internal/models"
 	"peanut/internal/pipeline"
 	"peanut/internal/providers"
 	"peanut/internal/storage/sqlite"
@@ -26,13 +28,38 @@ func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) error 
 }
 
 func newConfiguredCoordinator(ctx context.Context, cfg config.Config, db *sqlite.DB) (*pipeline.Coordinator, error) {
+	var modelStore models.Store
+	if db != nil {
+		modelStore = sqlite.NewModelStore(db)
+	}
+	modelRegistry := models.NewRegistry(cfg.Models.Root, modelStore, nil)
+	snapshot, err := modelRegistry.Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("scan model roles at %s: %w", cfg.Models.Root, err)
+	}
+	required := make(map[models.Role]models.Profile, 6)
+	for _, role := range []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent} {
+		profile, ok := modelRegistry.Active(role)
+		if !ok {
+			path, detail := filepath.Join(cfg.Models.Root, string(role)), "missing"
+			for _, candidate := range snapshot.Profiles {
+				if candidate.Role == role {
+					path = filepath.Join(cfg.Models.Root, filepath.FromSlash(candidate.Path), filepath.FromSlash(candidate.Entry))
+					detail = candidate.Error
+					break
+				}
+			}
+			return nil, fmt.Errorf("model role %q at %s is invalid: %s", role, path, detail)
+		}
+		required[role] = profile
+	}
 	manifest := ml.Manifest{
 		Paths: ml.Paths{
-			KWS:     cfg.Models.WakeWordPath,
-			VAD:     cfg.Models.VADPath,
-			STT:     cfg.Models.STTPath,
-			Speaker: cfg.Models.SpeakerPath,
-			TTS:     cfg.Models.TTSPath,
+			KWS:     modelDirectory(cfg.Models.Root, required[models.RoleKWS]),
+			VAD:     modelEntry(cfg.Models.Root, required[models.RoleVAD]),
+			STT:     modelDirectory(cfg.Models.Root, required[models.RoleSTT]),
+			Speaker: modelEntry(cfg.Models.Root, required[models.RoleSpeaker]),
+			TTS:     modelDirectory(cfg.Models.Root, required[models.RoleTTS]),
 		},
 		Provider: ml.CPUProvider,
 		Threads:  cfg.Models.Threads,
@@ -66,7 +93,8 @@ func newConfiguredCoordinator(ctx context.Context, cfg config.Config, db *sqlite
 	if err != nil {
 		return nil, fmt.Errorf("discover capabilities: %w", err)
 	}
-	parser := intent.NewQwenParser(cfg.Models.LlamaPath, cfg.Models.IntentPath, cfg.Models.Threads, cfg.HomeAssistant.Timeout)
+	intentProfile := required[models.RoleIntent]
+	parser := intent.NewModelParser(intentProfile.Runtime, modelEntry(cfg.Models.Root, intentProfile), cfg.Models.Threads, cfg.HomeAssistant.Timeout)
 	pcfg := pipeline.DefaultConfig()
 	pcfg.PreRollFrames = max(1, cfg.Audio.PreRollMilliseconds*audio.SampleRate/(1000*audio.FrameSamples))
 	pcfg.PreRollSamples = pcfg.PreRollFrames * audio.FrameSamples
@@ -87,6 +115,14 @@ func newConfiguredCoordinator(ctx context.Context, cfg config.Config, db *sqlite
 		Registry:        registry,
 		Capabilities:    capabilities,
 	})
+}
+
+func modelDirectory(root string, profile models.Profile) string {
+	return filepath.Join(root, filepath.FromSlash(profile.Path))
+}
+
+func modelEntry(root string, profile models.Profile) string {
+	return filepath.Join(modelDirectory(root, profile), filepath.FromSlash(profile.Entry))
 }
 
 func max(left, right int) int {
