@@ -10,13 +10,98 @@ package sherpa
 import "C"
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"unsafe"
 
 	"peanut/internal/audio"
 	"peanut/internal/ml"
+	"peanut/internal/ml/kws"
+	"peanut/internal/ml/speaker"
+	"peanut/internal/ml/stt"
+	"peanut/internal/ml/tts"
+	"peanut/internal/ml/vad"
 )
+
+type WakeDetector struct{}
+type VoiceActivityDetector struct{}
+type Transcriber struct{ manifest ml.Manifest }
+type SpeakerIdentifier struct{}
+type Synthesizer struct{}
+
+func nativeUnavailable(component string) error {
+	return fmt.Errorf("%w: %s C API adapter is not implemented", ErrUnavailable, component)
+}
+
+func NewWakeDetector(manifest ml.Manifest) (*WakeDetector, error) {
+	if err := manifest.Validate(); err != nil {
+		return nil, err
+	}
+	return &WakeDetector{}, nil
+}
+
+func NewVAD(manifest ml.Manifest) (*VoiceActivityDetector, error) {
+	if err := manifest.Validate(); err != nil {
+		return nil, err
+	}
+	return &VoiceActivityDetector{}, nil
+}
+
+func NewTranscriber(manifest ml.Manifest) (*Transcriber, error) {
+	if _, err := newNativeConfig(manifest); err != nil {
+		return nil, err
+	}
+	return &Transcriber{manifest: manifest}, nil
+}
+
+func NewSpeakerIdentifier(manifest ml.Manifest) (*SpeakerIdentifier, error) {
+	if err := manifest.Validate(); err != nil {
+		return nil, err
+	}
+	return &SpeakerIdentifier{}, nil
+}
+
+func NewSynthesizer(manifest ml.Manifest) (*Synthesizer, error) {
+	if err := manifest.Validate(); err != nil {
+		return nil, err
+	}
+	return &Synthesizer{}, nil
+}
+
+func (*WakeDetector) Detect(_ context.Context, frame audio.Frame) (kws.Result, error) {
+	if err := frame.Validate(); err != nil {
+		return kws.Result{}, err
+	}
+	return kws.Result{}, nativeUnavailable("KWS")
+}
+
+func (*WakeDetector) Reset() error { return nativeUnavailable("KWS") }
+
+func (*VoiceActivityDetector) Detect(_ context.Context, frame audio.Frame) (vad.Result, error) {
+	if err := frame.Validate(); err != nil {
+		return vad.Result{}, err
+	}
+	return vad.Result{}, nativeUnavailable("VAD")
+}
+
+func (*VoiceActivityDetector) Reset() error { return nativeUnavailable("VAD") }
+
+func (t *Transcriber) Transcribe(_ context.Context, input audio.Audio) (stt.Result, error) {
+	text, err := Transcribe(t.manifest, input)
+	return stt.Result{Text: text}, err
+}
+
+func (*SpeakerIdentifier) Identify(_ context.Context, input audio.Audio) speaker.Result {
+	if err := input.Validate(); err != nil {
+		return speaker.Result{Err: err}
+	}
+	return speaker.Result{Err: nativeUnavailable("speaker identification")}
+}
+
+func (*Synthesizer) Synthesize(_ context.Context, _ string) (tts.Result, error) {
+	return tts.Result{}, nativeUnavailable("TTS")
+}
 
 // Open validates configuration and proves the native SenseVoice model loads.
 func Open(manifest ml.Manifest) error {

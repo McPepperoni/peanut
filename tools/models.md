@@ -16,6 +16,8 @@ Do not commit model bundles, extracted model files, source archives, or recordin
 
 The `sherpa` build tag enables the CGO C API boundary. Install a released sherpa-onnx C API archive containing `sherpa-onnx/c-api/c-api.h` and the `sherpa-onnx-c-api` shared library; do not clone sherpa-onnx source into this repository. Build from `app/` with its include and library directories:
 
+The tagged build currently performs native inference only for the typed SenseVoice transcriber. KWS, VAD, speaker identification, and TTS expose their typed interfaces but return `sherpa.ErrUnavailable`; their C API wiring still requires validation against installed headers and model bundles. They do not return fabricated inference results.
+
 ```powershell
 $env:CGO_ENABLED = '1'
 $env:CGO_CFLAGS = '-IC:\sherpa-onnx\include'
