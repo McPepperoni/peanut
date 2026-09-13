@@ -10,10 +10,6 @@ import (
 
 var ErrUnsupported = errors.New("system audio playback is unsupported")
 
-type SystemPlayer struct{}
-
-func (SystemPlayer) Play(context.Context, audio.Audio) error { return ErrUnsupported }
-
 type Fake struct{ Played []audio.Audio }
 
 func (f *Fake) Play(_ context.Context, input audio.Audio) error {

@@ -44,6 +44,9 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 		return usage()
 	}
 	args = args[1:]
+	if dependencies.ModelRoot == "" {
+		dependencies.ModelRoot = runtimeConfig.Models.Root
+	}
 	if args[0] == "run" && dependencies.Run == nil {
 		dependencies.Run = func(runCtx context.Context) error {
 			return runConfigured(runCtx, runtimeConfig, db)

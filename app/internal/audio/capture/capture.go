@@ -11,12 +11,6 @@ import (
 
 var ErrUnsupported = errors.New("system audio capture is unsupported")
 
-type SystemCapture struct{}
-
-func (SystemCapture) Capture(context.Context) (<-chan audio.Frame, error) {
-	return nil, ErrUnsupported
-}
-
 type File struct{ path string }
 
 func NewFile(path string) *File { return &File{path: path} }

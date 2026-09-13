@@ -13,10 +13,12 @@ import (
 	mlspeaker "peanut/internal/ml/speaker"
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
+	"peanut/internal/models"
 	"peanut/internal/speaker"
 )
 
 type commandDependencies struct {
+	ModelRoot   string
 	Player      audio.Player
 	Synthesizer tts.Synthesizer
 	Transcriber stt.Transcriber
@@ -30,6 +32,8 @@ func dispatch(ctx context.Context, args []string, dependencies commandDependenci
 		return usage()
 	}
 	switch args[0] {
+	case "model":
+		return dispatchModel(ctx, args[1:], dependencies.ModelRoot, output)
 	case "speak":
 		if len(args) < 2 || dependencies.Synthesizer == nil || dependencies.Player == nil {
 			return usage()
@@ -85,6 +89,41 @@ func dispatch(ctx context.Context, args []string, dependencies commandDependenci
 	}
 }
 
+func dispatchModel(ctx context.Context, args []string, root string, output io.Writer) error {
+	if len(args) != 1 || (args[0] != "list" && args[0] != "verify") || root == "" {
+		return usage()
+	}
+	snapshot, err := models.NewRegistry(root, nil, nil).Scan(ctx)
+	if err != nil {
+		return err
+	}
+	if args[0] == "list" {
+		if _, err := fmt.Fprintln(output, "id\trole\truntime\tvalid\tpath"); err != nil {
+			return err
+		}
+		for _, profile := range snapshot.Profiles {
+			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%t\t%s\n", profile.ID, profile.Role, profile.Runtime, profile.Valid, profile.Path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, profile := range snapshot.Profiles {
+		if profile.Valid {
+			continue
+		}
+		if _, err := fmt.Fprintf(output, "%s: %s\n", profile.Path, profile.Error); err != nil {
+			return err
+		}
+	}
+	for _, profile := range snapshot.Profiles {
+		if !profile.Valid {
+			return errors.New("one or more model profiles are invalid")
+		}
+	}
+	return nil
+}
+
 func readWAV(path string) (audio.Audio, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -95,5 +134,5 @@ func readWAV(path string) (audio.Audio, error) {
 }
 
 func usage() error {
-	return errors.New("usage: run | enroll <id> | speak <text> | transcribe <input.wav> | test-audio <input.wav> (speak/transcribe require configured models)")
+	return errors.New("usage: run | model <list|verify> | enroll <id> | speak <text> | transcribe <input.wav> | test-audio <input.wav> (speak/transcribe require configured models)")
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,19 @@ import (
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
 )
+
+func TestModelCommandsUseModelsRoot(t *testing.T) {
+	root := t.TempDir()
+	writeValidIntentManifest(t, root)
+	var output bytes.Buffer
+	deps := commandDependencies{ModelRoot: root}
+	if err := dispatch(context.Background(), []string{"model", "list"}, deps, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "intent-local") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
 
 type fakeSynthesizer struct{ text string }
 
@@ -124,4 +138,18 @@ func writeTestWAV(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func writeValidIntentManifest(t *testing.T, root string) {
+	t.Helper()
+	directory := filepath.Join(root, "intent", "local")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "model.gguf"), []byte("model"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "model.json"), []byte(`{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 }
