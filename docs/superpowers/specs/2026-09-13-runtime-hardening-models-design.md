@@ -30,7 +30,7 @@ CLI/API
 
 SQLite remains the configuration source of truth. Model bytes stay on disk. The provider registry remains the extension point for future plugins; no new plugin framework is added.
 
-Core Go packages remain OS-neutral. File/stdin audio adapters compile everywhere. Native capture/playback adapters are selected behind build tags for Linux, Windows, and macOS. Unsupported native backends return clear runtime errors instead of breaking pure builds. sherpa and llama native code stays optional behind native build tags. CPU-only settings remain shared across platforms.
+Core Go packages remain OS-neutral. File/stdin audio adapters compile everywhere. Native capture/playback adapters are selected behind build tags for Linux, Windows, and macOS. Unsupported native backends return clear runtime errors instead of breaking pure builds. Native ML runtimes stay optional behind native build tags. CPU-only settings remain shared across platforms.
 
 ## Model contract
 
@@ -62,13 +62,13 @@ The API remains localhost-only by default. LAN binding requires pairing/authenti
 
 ```text
 models scan -> manifest validation -> SQLite metadata -> atomic runtime swap
-audio -> detector -> transcript -> Qwen JSON -> Go validation
+audio -> detector -> transcript -> structured intent model JSON -> Go validation
      -> provider action -> static result/TTS -> playback
 ```
 
 - Missing required model: startup fails with role and exact path.
 - Invalid replacement: role is reported invalid; prior valid role remains active.
-- Malformed Qwen JSON or unknown capability: reject without provider execution.
+- Malformed intent JSON or unknown capability: reject without provider execution.
 - Home Assistant failure: return classified provider error; keep runtime alive.
 - Unsupported audio backend: return platform-specific prerequisite error.
 - Shutdown cancels the coordinator, stops capture/playback, and closes SQLite.
