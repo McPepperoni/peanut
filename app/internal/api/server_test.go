@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"peanut/internal/config"
 	"peanut/internal/intent"
+	"peanut/internal/models"
 	"peanut/internal/storage/sqlite"
 )
 
@@ -24,7 +26,7 @@ func TestServerDefaultsToLocalhostAndRedactsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := NewServer(db, nil)
+	server := NewServer(db, nil, nil)
 	address, err := server.Address(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +58,7 @@ func TestServerRequiresBearerAuthWhenLANEnabled(t *testing.T) {
 	if err := store.Save(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(db, nil)
+	server := NewServer(db, nil, nil)
 
 	unauthorized := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -68,7 +70,7 @@ func TestServerRequiresBearerAuthWhenLANEnabled(t *testing.T) {
 	}
 }
 
-func TestServerKeepsStartupAuthenticationAfterAllowLANUpdate(t *testing.T) {
+func TestServerReadsAuthenticationConfigForEveryRequest(t *testing.T) {
 	db := apiDB(t)
 	store := sqlite.NewConfigStore(db)
 	cfg := loadConfig(t, store)
@@ -78,19 +80,15 @@ func TestServerKeepsStartupAuthenticationAfterAllowLANUpdate(t *testing.T) {
 	if err := store.Save(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(db, nil)
+	server := NewServer(db, nil, nil)
 
 	updated := request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"api":{"address":"127.0.0.1:8080","allow_lan":false}}`, "pairing-secret")
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update status = %d, body = %s", updated.Code, updated.Body.String())
 	}
-	unauthorized := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status = %d", unauthorized.Code)
-	}
-	authorized := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "pairing-secret")
-	if authorized.Code != http.StatusOK {
-		t.Fatalf("authorized status = %d, body = %s", authorized.Code, authorized.Body.String())
+	response := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status after disabling LAN = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 
@@ -103,7 +101,7 @@ func TestServerConfigPutCannotOverwritePairingToken(t *testing.T) {
 	if err := store.Save(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(db, nil)
+	server := NewServer(db, nil, nil)
 
 	get := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
 	put := request(t, server.Handler(), http.MethodPut, "/api/v1/config", get.Body.String(), "")
@@ -128,7 +126,7 @@ func TestServerConfigPutCannotOverwritePairingToken(t *testing.T) {
 
 func TestServerRejectsLANAddressWithoutLANOptIn(t *testing.T) {
 	db := apiDB(t)
-	server := NewServer(db, nil)
+	server := NewServer(db, nil, nil)
 	response := request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"api":{"address":"0.0.0.0:8080"}}`, "")
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
@@ -141,7 +139,7 @@ func TestServerRejectsLANAddressWithoutLANOptIn(t *testing.T) {
 
 func TestServerGeneratesAndStoresPairingToken(t *testing.T) {
 	db := apiDB(t)
-	server := NewServer(db, nil)
+	server := NewServer(db, nil, nil)
 	response := request(t, server.Handler(), http.MethodPost, "/api/v1/config/pairing-token", "", "")
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
@@ -164,7 +162,7 @@ func TestServerGeneratesAndStoresPairingToken(t *testing.T) {
 func TestServerConfigWriteIsValidatedAtomicAndRediscovered(t *testing.T) {
 	db := apiDB(t)
 	refresher := &fakeRefresher{}
-	server := NewServer(db, refresher)
+	server := NewServer(db, refresher, nil)
 
 	invalid := request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"home_assistant":{"url":"not-a-url","token":"new-secret"}}`, "")
 	if invalid.Code != http.StatusBadRequest {
@@ -202,7 +200,7 @@ func TestServerConfigPutPreservesRedactedHomeAssistantToken(t *testing.T) {
 	if err := store.Save(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(db, nil)
+	server := NewServer(db, nil, nil)
 
 	response := request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"home_assistant":{"token":"[REDACTED]"}}`, "")
 	if response.Code != http.StatusOK {
@@ -224,10 +222,126 @@ func TestServerConfigPutPreservesRedactedHomeAssistantToken(t *testing.T) {
 func TestServerRefreshEndpointRediscoversCapabilities(t *testing.T) {
 	db := apiDB(t)
 	refresher := &fakeRefresher{}
-	server := NewServer(db, refresher)
+	server := NewServer(db, refresher, nil)
 	response := request(t, server.Handler(), http.MethodPost, "/api/v1/config/refresh", "", "")
 	if response.Code != http.StatusNoContent || refresher.calls != 1 {
 		t.Fatalf("status = %d, calls = %d, body = %s", response.Code, refresher.calls, response.Body.String())
+	}
+}
+
+func TestServerReturnsJSONWhenConfigurationCannotLoad(t *testing.T) {
+	db := apiDB(t)
+	server := NewServer(db, nil, nil)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	response := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q", got)
+	}
+}
+
+func TestModelsGETReloadsAndReturnsSnapshot(t *testing.T) {
+	db := apiDB(t)
+	reloader := &fakeModelReloader{snapshot: models.Snapshot{
+		Profiles: []models.Profile{
+			{ID: "intent-local", Role: models.RoleIntent, Valid: true},
+			{ID: "invalid:stt/bad", Role: models.RoleSTT, Error: "entry missing"},
+		},
+		Active: map[models.Role]models.Profile{
+			models.RoleIntent: {ID: "intent-local", Role: models.RoleIntent, Valid: true},
+		},
+	}}
+
+	response := request(t, NewServer(db, nil, reloader).Handler(), http.MethodGet, "/api/v1/models", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if reloader.calls != 1 {
+		t.Fatalf("reload calls = %d", reloader.calls)
+	}
+	var body struct {
+		Profiles []models.Profile               `json:"profiles"`
+		Active   map[models.Role]models.Profile `json:"active"`
+		Errors   []string                       `json:"errors"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Profiles) != 2 || body.Active[models.RoleIntent].ID != "intent-local" {
+		t.Fatalf("snapshot = %+v", body)
+	}
+	if len(body.Errors) != 1 || body.Errors[0] != "entry missing" {
+		t.Fatalf("errors = %#v", body.Errors)
+	}
+}
+
+func TestModelsGETKeepsPreviousSnapshotOnReloadError(t *testing.T) {
+	db := apiDB(t)
+	reloader := &fakeModelReloader{
+		err: errors.New("bad model"),
+		active: map[models.Role]models.Profile{
+			models.RoleIntent: {ID: "intent-old", Role: models.RoleIntent, Valid: true},
+		},
+	}
+
+	response := request(t, NewServer(db, nil, reloader).Handler(), http.MethodGet, "/api/v1/models", "", "")
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if _, ok := reloader.Active(models.RoleIntent); !ok {
+		t.Fatal("active role was erased")
+	}
+}
+
+func TestModelsRejectsOtherMethods(t *testing.T) {
+	db := apiDB(t)
+	response := request(t, NewServer(db, nil, &fakeModelReloader{}).Handler(), http.MethodPost, "/api/v1/models", "", "")
+	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET" {
+		t.Fatalf("status = %d, Allow = %q", response.Code, response.Header().Get("Allow"))
+	}
+}
+
+func TestDocsEndpointsAreEmbeddedAndLocal(t *testing.T) {
+	db := apiDB(t)
+	handler := NewServer(db, nil, nil).Handler()
+
+	openAPI := request(t, handler, http.MethodGet, "/api/v1/openapi.json", "", "")
+	if openAPI.Code != http.StatusOK || openAPI.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("openapi status = %d, content type = %q", openAPI.Code, openAPI.Header().Get("Content-Type"))
+	}
+	var document struct {
+		OpenAPI string         `json:"openapi"`
+		Paths   map[string]any `json:"paths"`
+	}
+	if err := json.NewDecoder(openAPI.Body).Decode(&document); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/v1/config", "/api/v1/config/pairing-token", "/api/v1/config/refresh", "/api/v1/models", "/api/v1/openapi.json", "/docs"} {
+		if _, ok := document.Paths[path]; !ok {
+			t.Errorf("OpenAPI missing path %q", path)
+		}
+	}
+
+	docs := request(t, handler, http.MethodGet, "/docs", "", "")
+	if docs.Code != http.StatusOK || docs.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("docs status = %d, content type = %q", docs.Code, docs.Header().Get("Content-Type"))
+	}
+	html := docs.Body.String()
+	if !strings.Contains(html, "/api/v1/openapi.json") || !strings.Contains(html, `src="/scalar.js"`) {
+		t.Fatalf("docs HTML = %s", html)
+	}
+	if strings.Contains(html, `src="http://`) || strings.Contains(html, `src="https://`) {
+		t.Fatalf("docs use remote script source: %s", html)
+	}
+
+	script := request(t, handler, http.MethodGet, "/scalar.js", "", "")
+	if script.Code != http.StatusOK || script.Body.Len() == 0 {
+		t.Fatalf("scalar script status = %d, size = %d", script.Code, script.Body.Len())
 	}
 }
 
@@ -236,6 +350,23 @@ type fakeRefresher struct{ calls int }
 func (f *fakeRefresher) Discover(context.Context) ([]intent.Capability, error) {
 	f.calls++
 	return nil, nil
+}
+
+type fakeModelReloader struct {
+	snapshot models.Snapshot
+	err      error
+	calls    int
+	active   map[models.Role]models.Profile
+}
+
+func (f *fakeModelReloader) Reload(context.Context) (models.Snapshot, error) {
+	f.calls++
+	return f.snapshot, f.err
+}
+
+func (f *fakeModelReloader) Active(role models.Role) (models.Profile, bool) {
+	profile, ok := f.active[role]
+	return profile, ok
 }
 
 func apiDB(t *testing.T) *sqlite.DB {

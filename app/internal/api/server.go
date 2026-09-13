@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -11,31 +12,46 @@ import (
 
 	"peanut/internal/config"
 	"peanut/internal/intent"
+	"peanut/internal/models"
 	"peanut/internal/storage/sqlite"
 )
 
 const Redacted = "[REDACTED]"
 
+//go:embed openapi.json
+var openAPIDocument []byte
+
+//go:embed docs.html
+var docsPage []byte
+
+//go:embed scalar.js
+var scalarScript []byte
+
 type Refresher interface {
 	Discover(context.Context) ([]intent.Capability, error)
 }
 
-type Server struct {
-	config      *sqlite.ConfigStore
-	refresher   Refresher
-	handler     http.Handler
-	requireAuth bool
+type ModelReloader interface {
+	Reload(context.Context) (models.Snapshot, error)
 }
 
-func NewServer(db *sqlite.DB, refresher Refresher) *Server {
-	server := &Server{config: sqlite.NewConfigStore(db), refresher: refresher}
-	if cfg, err := server.load(context.Background()); err == nil {
-		server.requireAuth = cfg.API.AllowLAN
-	}
+type Server struct {
+	config        *sqlite.ConfigStore
+	refresher     Refresher
+	modelReloader ModelReloader
+	handler       http.Handler
+}
+
+func NewServer(db *sqlite.DB, refresher Refresher, modelReloader ModelReloader) *Server {
+	server := &Server{config: sqlite.NewConfigStore(db), refresher: refresher, modelReloader: modelReloader}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/config", server.handleConfig)
 	mux.HandleFunc("/api/v1/config/pairing-token", server.handlePairingToken)
 	mux.HandleFunc("/api/v1/config/refresh", server.handleRefresh)
+	mux.HandleFunc("/api/v1/models", server.handleModels)
+	mux.HandleFunc("/api/v1/openapi.json", serveEmbedded("application/json", openAPIDocument))
+	mux.HandleFunc("/docs", serveEmbedded("text/html; charset=utf-8", docsPage))
+	mux.HandleFunc("/scalar.js", serveEmbedded("text/javascript; charset=utf-8", scalarScript))
 	server.handler = server.authenticate(mux)
 	return server
 }
@@ -54,7 +70,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, "configuration unavailable")
 			return
 		}
-		if s.requireAuth {
+		if cfg.API.AllowLAN {
 			provided := ""
 			const prefix = "Bearer "
 			if value := r.Header.Get("Authorization"); len(value) > len(prefix) && value[:len(prefix)] == prefix {
@@ -67,6 +83,46 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.modelReloader == nil {
+		writeError(w, http.StatusServiceUnavailable, "model reload unavailable")
+		return
+	}
+	snapshot, err := s.modelReloader.Reload(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "model reload failed")
+		return
+	}
+	errors := make([]string, 0)
+	for _, profile := range snapshot.Profiles {
+		if profile.Error != "" {
+			errors = append(errors, profile.Error)
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Profiles []models.Profile               `json:"profiles"`
+		Active   map[models.Role]models.Profile `json:"active"`
+		Errors   []string                       `json:"errors"`
+	}{snapshot.Profiles, snapshot.Active, errors})
+}
+
+func serveEmbedded(contentType string, content []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		_, _ = w.Write(content)
+	}
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

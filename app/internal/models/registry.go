@@ -72,6 +72,8 @@ func NewRegistry(root string, store Store, swap func(context.Context, Snapshot) 
 	return &Registry{root: root, store: store, swap: swap, active: make(map[Role]Profile)}
 }
 
+func (r *Registry) Reload(ctx context.Context) (Snapshot, error) { return r.Scan(ctx) }
+
 func (r *Registry) Scan(ctx context.Context) (Snapshot, error) {
 	r.scanMu.Lock()
 	defer r.scanMu.Unlock()

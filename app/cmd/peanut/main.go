@@ -10,6 +10,7 @@ import (
 
 	"peanut/internal/api"
 	"peanut/internal/config"
+	"peanut/internal/models"
 	"peanut/internal/providers"
 	"peanut/internal/storage/sqlite"
 )
@@ -53,7 +54,12 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 
 func serveAPI(ctx context.Context, db *sqlite.DB) error {
 	provider := providers.NewHomeAssistantProvider(db, nil)
-	server := api.NewServer(db, provider)
+	var cfg config.Config
+	if err := sqlite.NewConfigStore(db).Load(ctx, &cfg); err != nil {
+		return err
+	}
+	modelRegistry := models.NewRegistry(cfg.Models.Root, sqlite.NewModelStore(db), nil)
+	server := api.NewServer(db, provider, modelRegistry)
 	address, err := server.Address(ctx)
 	if err != nil {
 		return err

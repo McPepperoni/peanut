@@ -1,0 +1,98 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Peanut Local API",
+    "version": "1.0.0",
+    "description": "Local configuration and model-management API. Bearer authentication is required only when LAN access is enabled. Secret values are write-only and returned as [REDACTED]."
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": { "error": { "type": "string" } }
+      },
+      "Config": {
+        "type": "object",
+        "properties": {
+          "home_assistant": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string", "format": "uri" },
+              "token": { "type": "string", "description": "Empty or [REDACTED] in responses." },
+              "timeout_seconds": { "type": "integer", "format": "int64" }
+            }
+          },
+          "api": {
+            "type": "object",
+            "properties": {
+              "address": { "type": "string" },
+              "allow_lan": { "type": "boolean" },
+              "pairing_token": { "type": "string", "description": "Empty or [REDACTED] in responses." }
+            }
+          }
+        }
+      },
+      "ModelProfile": {
+        "type": "object",
+        "required": ["id", "role", "runtime", "path", "entry", "sha256", "threads", "valid", "error"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "type": "string", "enum": ["kws", "vad", "stt", "speaker", "tts", "intent"] },
+          "runtime": { "type": "string" },
+          "path": { "type": "string" },
+          "entry": { "type": "string" },
+          "sha256": { "type": "string" },
+          "threads": { "type": "integer" },
+          "valid": { "type": "boolean" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": { "description": "Missing or invalid pairing token.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "ConfigurationUnavailable": { "description": "Configuration could not be loaded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    }
+  },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/api/v1/config": {
+      "get": {
+        "summary": "Read redacted runtime configuration",
+        "responses": { "200": { "description": "Current configuration.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Config" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "500": { "$ref": "#/components/responses/ConfigurationUnavailable" } }
+      },
+      "put": {
+        "summary": "Validate and replace supplied configuration fields",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Config" } } } },
+        "responses": { "200": { "description": "Updated redacted configuration.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Config" } } } }, "400": { "description": "Invalid configuration.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "500": { "$ref": "#/components/responses/ConfigurationUnavailable" }, "502": { "description": "Provider refresh failed." } }
+      }
+    },
+    "/api/v1/config/pairing-token": {
+      "post": {
+        "summary": "Generate and store a new pairing token",
+        "responses": { "201": { "description": "New token. This is the only response that exposes it.", "content": { "application/json": { "schema": { "type": "object", "properties": { "pairing_token": { "type": "string" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "500": { "$ref": "#/components/responses/ConfigurationUnavailable" } }
+      }
+    },
+    "/api/v1/config/refresh": {
+      "post": {
+        "summary": "Rediscover provider capabilities",
+        "responses": { "204": { "description": "Capabilities refreshed." }, "401": { "$ref": "#/components/responses/Unauthorized" }, "500": { "$ref": "#/components/responses/ConfigurationUnavailable" }, "502": { "description": "Provider refresh failed." }, "503": { "description": "Provider refresh unavailable." } }
+      }
+    },
+    "/api/v1/models": {
+      "get": {
+        "summary": "Reload local model profiles and return the resulting snapshot",
+        "responses": { "200": { "description": "Profiles, active roles, and validation errors.", "content": { "application/json": { "schema": { "type": "object", "required": ["profiles", "active", "errors"], "properties": { "profiles": { "type": "array", "items": { "$ref": "#/components/schemas/ModelProfile" } }, "active": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/ModelProfile" } }, "errors": { "type": "array", "items": { "type": "string" } } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "500": { "$ref": "#/components/responses/ConfigurationUnavailable" }, "502": { "description": "Model reload failed; previous active models remain loaded." }, "503": { "description": "Model reload unavailable." } }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": { "summary": "Read this OpenAPI document", "responses": { "200": { "description": "OpenAPI 3.1 JSON." }, "401": { "$ref": "#/components/responses/Unauthorized" }, "500": { "$ref": "#/components/responses/ConfigurationUnavailable" } } }
+    },
+    "/docs": {
+      "get": { "summary": "Open the locally hosted Scalar API reference", "responses": { "200": { "description": "Scalar HTML." }, "401": { "$ref": "#/components/responses/Unauthorized" }, "500": { "$ref": "#/components/responses/ConfigurationUnavailable" } } }
+    }
+  }
+}
