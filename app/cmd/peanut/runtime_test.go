@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"peanut/internal/audio"
 	"peanut/internal/config"
 	"peanut/internal/intent"
 	"peanut/internal/models"
@@ -25,6 +28,92 @@ func TestRunFailsBeforeAudioWhenRequiredModelMissing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "role") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+func TestRuntimeClosesResourcesAfterCoordinatorStops(t *testing.T) {
+	runtimeErr := errors.New("runtime failed")
+	closeErr := errors.New("close failed")
+	for _, test := range []struct {
+		name     string
+		serveErr error
+		wantErr  error
+	}{
+		{name: "runtime error wins", serveErr: runtimeErr, wantErr: runtimeErr},
+		{name: "close error follows clean shutdown", serveErr: http.ErrServerClosed, wantErr: closeErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cleanupStarted := make(chan struct{})
+			releaseCleanup := make(chan struct{})
+			capture := newRuntimeTestResource(closeErr)
+			player := newRuntimeTestResource(nil)
+			runCtx, cancel := context.WithCancel(context.Background())
+			result := make(chan error, 1)
+			go func() {
+				err := runRuntimeProcesses(
+					runCtx,
+					cancel,
+					func(ctx context.Context) error {
+						<-ctx.Done()
+						close(cleanupStarted)
+						<-releaseCleanup
+						return ctx.Err()
+					},
+					func() error { return test.serveErr },
+					func() {},
+				)
+				if closeResourceErr := closeRuntimeResources(capture, player); err == nil {
+					err = closeResourceErr
+				}
+				result <- err
+			}()
+
+			<-cleanupStarted
+			select {
+			case err := <-result:
+				t.Fatalf("runtime returned before coordinator cleanup: %v", err)
+			default:
+			}
+			for name, resource := range map[string]*runtimeTestResource{"capture": capture, "player": player} {
+				select {
+				case <-resource.closed:
+					t.Fatalf("%s closed before coordinator cleanup", name)
+				default:
+				}
+			}
+
+			close(releaseCleanup)
+			if err := <-result; !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want %v", err, test.wantErr)
+			}
+			for name, resource := range map[string]*runtimeTestResource{"capture": capture, "player": player} {
+				select {
+				case <-resource.closed:
+				default:
+					t.Fatalf("%s was not closed", name)
+				}
+			}
+		})
+	}
+}
+
+type runtimeTestResource struct {
+	closeErr error
+	closed   chan struct{}
+}
+
+func newRuntimeTestResource(closeErr error) *runtimeTestResource {
+	return &runtimeTestResource{closeErr: closeErr, closed: make(chan struct{})}
+}
+
+func (r *runtimeTestResource) Capture(context.Context) (<-chan audio.Frame, error) {
+	return nil, nil
+}
+
+func (r *runtimeTestResource) Play(context.Context, audio.Audio) error { return nil }
+
+func (r *runtimeTestResource) Close() error {
+	close(r.closed)
+	return r.closeErr
 }
 
 func TestRuntimeRegistryReloadInvokesLiveSwapBoundary(t *testing.T) {

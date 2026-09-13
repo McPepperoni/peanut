@@ -148,17 +148,35 @@ func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err e
 		return err
 	}
 	httpServer := &http.Server{Addr: address, Handler: server.Handler()}
-	runErrors := make(chan error, 2)
-	go func() { runErrors <- runtime.coordinator.Run(runCtx) }()
-	go func() { runErrors <- httpServer.ListenAndServe() }()
+	return runRuntimeProcesses(
+		runCtx,
+		cancel,
+		runtime.coordinator.Run,
+		httpServer.ListenAndServe,
+		func() { _ = httpServer.Shutdown(context.Background()) },
+	)
+}
+
+func runRuntimeProcesses(ctx context.Context, cancel context.CancelFunc, runCoordinator func(context.Context) error, serve func() error, shutdownServer func()) error {
+	coordinatorDone := make(chan error, 1)
+	serverDone := make(chan error, 1)
+	go func() { coordinatorDone <- runCoordinator(ctx) }()
+	go func() { serverDone <- serve() }()
+
 	var runErr error
+	coordinatorStopped := false
 	select {
-	case runErr = <-runErrors:
-	case <-runCtx.Done():
-		runErr = runCtx.Err()
+	case runErr = <-coordinatorDone:
+		coordinatorStopped = true
+	case runErr = <-serverDone:
+	case <-ctx.Done():
+		runErr = ctx.Err()
 	}
 	cancel()
-	_ = httpServer.Shutdown(context.Background())
+	shutdownServer()
+	if !coordinatorStopped {
+		<-coordinatorDone
+	}
 	if errors.Is(runErr, http.ErrServerClosed) {
 		return nil
 	}
