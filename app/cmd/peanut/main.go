@@ -35,14 +35,18 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 	if len(args) > 1 && args[1] == "api" {
 		return serveAPI(ctx, db)
 	}
-	if _, err := config.Load(databasePath); err != nil {
+	runtimeConfig, err := config.Load(databasePath)
+	if err != nil {
 		return err
 	}
-	if len(args) == 0 {
+	if len(args) <= 1 {
 		return usage()
 	}
-	if len(args) > 0 {
-		args = args[1:]
+	args = args[1:]
+	if args[0] == "run" && dependencies.Run == nil {
+		dependencies.Run = func(runCtx context.Context) error {
+			return runConfigured(runCtx, runtimeConfig, db)
+		}
 	}
 	return dispatch(ctx, args, dependencies, output)
 }

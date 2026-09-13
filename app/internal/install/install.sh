@@ -14,10 +14,15 @@ command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 mkdir -p "$ROOT_DIR/build"
 (cd "$APP_DIR" && go build -o "$ROOT_DIR/build/peanut" ./cmd/peanut)
 "$ROOT_DIR/build/peanut" api >/dev/null 2>&1 &
+api_ready=false
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  curl --silent --fail "$API" >/dev/null 2>&1 && break
+  if curl --silent --fail "$API" >/dev/null 2>&1; then
+    api_ready=true
+    break
+  fi
   sleep 1
 done
+$api_ready || { echo "Peanut API did not become ready at $API" >&2; exit 1; }
 
 printf "Do you already have Home Assistant? [y/N] "
 IFS= read -r HAS_HA

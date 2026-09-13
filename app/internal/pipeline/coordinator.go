@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"peanut/internal/audio"
 	"peanut/internal/intent"
@@ -53,9 +54,28 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	}
 	var preRoll []audio.Frame
 	var recording []float32
-	for frame := range frames {
+	completed := false
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		frame, ok, timedOut := c.nextFrame(ctx, frames)
+		if timedOut {
+			if err := c.machine.Transition(Timeout); err != nil {
+				return c.recover(err)
+			}
+			if err := c.resetDetectors(); err != nil {
+				return c.recover(err)
+			}
+			preRoll = nil
+			recording = nil
+			continue
+		}
+		if !ok {
+			if completed {
+				return nil
+			}
+			return c.recover(errors.New("capture ended before command completed"))
 		}
 		switch c.State() {
 		case WaitingWake:
@@ -69,7 +89,12 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if err := c.machine.Transition(WakeDetected); err != nil {
 				return err
 			}
-			if err := c.deps.Player.Play(ctx, c.deps.Acknowledgement); err != nil {
+			if err := runStage(ctx, c.cfg.AcknowledgementTimeout, func(stageCtx context.Context) error {
+				return c.deps.Player.Play(stageCtx, c.deps.Acknowledgement)
+			}); err != nil {
+				return c.recover(err)
+			}
+			if err := drain(ctx, frames, c.cfg.AcknowledgementTail); err != nil {
 				return c.recover(err)
 			}
 			if err := c.machine.Transition(AcknowledgementFinished); err != nil {
@@ -104,13 +129,70 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if err := c.machine.Transition(SpeechEnded); err != nil {
 				return c.recover(err)
 			}
-			if err := c.process(ctx, recording); err != nil {
+			if err := runStage(ctx, c.cfg.ProcessingTimeout, func(stageCtx context.Context) error {
+				return c.process(stageCtx, recording)
+			}); err != nil {
 				return c.recover(err)
 			}
-			return nil
+			if err := drain(ctx, frames, c.cfg.PlaybackTail); err != nil {
+				return c.recover(err)
+			}
+			completed = true
+			preRoll = nil
+			recording = nil
 		}
 	}
-	return c.recover(errors.New("capture ended before command completed"))
+}
+
+func (c *Coordinator) nextFrame(ctx context.Context, frames <-chan audio.Frame) (audio.Frame, bool, bool) {
+	duration := timeoutFor(c.State(), c.cfg)
+	if duration <= 0 {
+		select {
+		case <-ctx.Done():
+			return audio.Frame{}, false, false
+		case frame, ok := <-frames:
+			return frame, ok, false
+		}
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return audio.Frame{}, false, false
+	case <-timer.C:
+		return audio.Frame{}, false, true
+	case frame, ok := <-frames:
+		return frame, ok, false
+	}
+}
+
+func runStage(ctx context.Context, duration time.Duration, fn func(context.Context) error) error {
+	if duration <= 0 {
+		return fn(ctx)
+	}
+	stageCtx, cancel := context.WithTimeout(ctx, duration)
+	defer cancel()
+	return fn(stageCtx)
+}
+
+func drain(ctx context.Context, frames <-chan audio.Frame, duration time.Duration) error {
+	if duration <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		case _, ok := <-frames:
+			if !ok {
+				return nil
+			}
+		}
+	}
 }
 
 func (c *Coordinator) process(ctx context.Context, samples []float32) error {
@@ -134,7 +216,7 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 		if plan.Status == intent.StatusClarify {
 			message = plan.Clarification
 		}
-		response, err := c.deps.Synthesizer.Synthesize(ctx, message)
+		response, err := runSynthesis(ctx, c.cfg.SynthesisTimeout, c.deps.Synthesizer, message)
 		if err != nil {
 			return err
 		}
@@ -147,11 +229,14 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 		if err := c.machine.Transition(SynthesisFinished); err != nil {
 			return err
 		}
-		if err := c.deps.Player.Play(ctx, response.Audio); err != nil {
+		if err := runStage(ctx, c.cfg.PlaybackTimeout, func(stageCtx context.Context) error {
+			return c.deps.Player.Play(stageCtx, response.Audio)
+		}); err != nil {
 			return err
 		}
-		_ = c.deps.WakeDetector.Reset()
-		_ = c.deps.VAD.Reset()
+		if err := c.resetDetectors(); err != nil {
+			return err
+		}
 		return c.machine.Transition(PlaybackFinished)
 	}
 	for _, step := range plan.Steps {
@@ -177,7 +262,7 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 	if err := c.machine.Transition(ProcessingFinished); err != nil {
 		return err
 	}
-	response, err := c.deps.Synthesizer.Synthesize(ctx, interaction.Success)
+	response, err := runSynthesis(ctx, c.cfg.SynthesisTimeout, c.deps.Synthesizer, interaction.Success)
 	if err != nil {
 		return err
 	}
@@ -187,17 +272,41 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 	if err := c.machine.Transition(SynthesisFinished); err != nil {
 		return err
 	}
-	if err := c.deps.Player.Play(ctx, response.Audio); err != nil {
+	if err := runStage(ctx, c.cfg.PlaybackTimeout, func(stageCtx context.Context) error {
+		return c.deps.Player.Play(stageCtx, response.Audio)
+	}); err != nil {
 		return err
 	}
-	_ = c.deps.WakeDetector.Reset()
-	_ = c.deps.VAD.Reset()
+	if err := c.resetDetectors(); err != nil {
+		return err
+	}
 	return c.machine.Transition(PlaybackFinished)
 }
 
+func runSynthesis(ctx context.Context, timeout time.Duration, synthesizer tts.Synthesizer, text string) (tts.Result, error) {
+	var result tts.Result
+	err := runStage(ctx, timeout, func(stageCtx context.Context) error {
+		var err error
+		result, err = synthesizer.Synthesize(stageCtx, text)
+		return err
+	})
+	return result, err
+}
+
+func (c *Coordinator) resetDetectors() error {
+	if err := c.deps.WakeDetector.Reset(); err != nil {
+		return fmt.Errorf("reset wake detector: %w", err)
+	}
+	if err := c.deps.VAD.Reset(); err != nil {
+		return fmt.Errorf("reset VAD: %w", err)
+	}
+	return nil
+}
+
 func (c *Coordinator) recover(err error) error {
-	_ = c.deps.WakeDetector.Reset()
-	_ = c.deps.VAD.Reset()
+	if resetErr := c.resetDetectors(); resetErr != nil {
+		err = fmt.Errorf("%w; %v", err, resetErr)
+	}
 	c.machine = NewMachine(c.cfg)
 	return err
 }

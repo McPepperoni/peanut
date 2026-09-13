@@ -18,9 +18,11 @@ try {
     Pop-Location
 }
 Start-Process -WindowStyle Hidden -FilePath $Binary -ArgumentList 'api'
+$ApiReady = $false
 for ($i = 0; $i -lt 10; $i++) {
-    try { Invoke-WebRequest -UseBasicParsing -Uri $Api -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Seconds 1 }
+    try { Invoke-WebRequest -UseBasicParsing -Uri $Api -TimeoutSec 1 | Out-Null; $ApiReady = $true; break } catch { Start-Sleep -Seconds 1 }
 }
+if (-not $ApiReady) { throw "Peanut API did not become ready at $Api" }
 
 $HasHA = Read-Host 'Do you already have Home Assistant? [y/N]'
 if ($HasHA -match '^(?i:y|yes)$') {

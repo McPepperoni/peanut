@@ -11,11 +11,13 @@ type Config struct {
 	PreRollSamples         int
 	VADThreshold           float32
 	AcknowledgementTimeout time.Duration
+	AcknowledgementTail    time.Duration
 	NoSpeechTimeout        time.Duration
 	MaximumCommandDuration time.Duration
 	ProcessingTimeout      time.Duration
 	SynthesisTimeout       time.Duration
 	PlaybackTimeout        time.Duration
+	PlaybackTail           time.Duration
 }
 
 func DefaultConfig() Config {
