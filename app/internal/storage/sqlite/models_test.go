@@ -48,3 +48,21 @@ func TestModelStoreRejectsAbsolutePaths(t *testing.T) {
 		t.Fatal("absolute model path was stored")
 	}
 }
+
+func TestModelStoreRejectsUnsafeEntries(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "peanut.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []string{filepath.Join(t.TempDir(), "model.gguf"), "../model.gguf"} {
+		profile := models.Profile{ID: "intent-local", Role: models.RoleIntent, Runtime: "local", Path: "intent/local", Entry: entry, Valid: true}
+		if err := NewModelStore(db).ReplaceSnapshot(ctx, []models.Profile{profile}); err == nil {
+			t.Errorf("unsafe entry %q was stored", entry)
+		}
+	}
+}

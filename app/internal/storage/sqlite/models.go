@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"peanut/internal/models"
 )
@@ -18,8 +19,11 @@ func (s *ModelStore) ReplaceSnapshot(ctx context.Context, profiles []models.Prof
 		return errors.New("model store is required")
 	}
 	for _, profile := range profiles {
-		if filepath.IsAbs(profile.Path) {
+		if profile.Path == "" || unsafeRelativePath(profile.Path) {
 			return fmt.Errorf("model %q path must be relative", profile.ID)
+		}
+		if unsafeRelativePath(profile.Entry) {
+			return fmt.Errorf("model %q entry must be relative without traversal", profile.ID)
 		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -42,6 +46,21 @@ func (s *ModelStore) ReplaceSnapshot(ctx context.Context, profiles []models.Prof
 		return fmt.Errorf("commit model snapshot: %w", err)
 	}
 	return nil
+}
+
+func unsafeRelativePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	if filepath.IsAbs(filepath.FromSlash(path)) {
+		return true
+	}
+	for _, part := range strings.FieldsFunc(path, func(character rune) bool { return character == '/' || character == '\\' }) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *ModelStore) List(ctx context.Context) ([]models.Profile, error) {

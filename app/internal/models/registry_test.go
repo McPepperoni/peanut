@@ -10,11 +10,28 @@ import (
 	"testing"
 )
 
-type fakeModelStore struct{ profiles []Profile }
+type fakeModelStore struct {
+	profiles []Profile
+	err      error
+}
 
 func (s *fakeModelStore) ReplaceSnapshot(_ context.Context, profiles []Profile) error {
+	if s.err != nil {
+		return s.err
+	}
+	seen := make(map[string]bool)
+	for _, profile := range profiles {
+		if seen[profile.ID] {
+			return fmt.Errorf("duplicate id %q", profile.ID)
+		}
+		seen[profile.ID] = true
+	}
 	s.profiles = append([]Profile(nil), profiles...)
 	return nil
+}
+
+func (s *fakeModelStore) List(context.Context) ([]Profile, error) {
+	return append([]Profile(nil), s.profiles...), nil
 }
 
 func TestRegistryScansManifestProfiles(t *testing.T) {
@@ -85,17 +102,72 @@ func TestRegistryScansOnlyDirectProfilesAndSortsByID(t *testing.T) {
 func TestRegistryKeepsPriorRoleWhenReloadFails(t *testing.T) {
 	root := t.TempDir()
 	writeModelManifest(t, root, "intent/local", `{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf"}`)
-	registry := NewRegistry(root, &fakeModelStore{}, nil)
+	store := &fakeModelStore{}
+	registry := NewRegistry(root, store, nil)
 	if _, err := registry.Scan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	writeModelManifest(t, root, "intent/local", `{"id":"intent-new","role":"intent","runtime":"local","entry":"model.gguf"}`)
 	registry.swap = func(context.Context, Snapshot) error { return errors.New("load failed") }
 
 	if _, err := registry.Scan(context.Background()); err == nil {
 		t.Fatal("want swap error")
 	}
-	if _, ok := registry.Active(RoleIntent); !ok {
-		t.Fatal("prior role was discarded")
+	if active, ok := registry.Active(RoleIntent); !ok || active.ID != "intent-local" {
+		t.Fatalf("active intent = %#v", active)
+	}
+	if len(store.profiles) != 1 || store.profiles[0].ID != "intent-local" {
+		t.Fatalf("stored profiles = %#v", store.profiles)
+	}
+}
+
+func TestRegistryDoesNotSwapWhenPersistenceFails(t *testing.T) {
+	root := t.TempDir()
+	writeModelManifest(t, root, "intent/local", `{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf"}`)
+	store := &fakeModelStore{}
+	registry := NewRegistry(root, store, nil)
+	if _, err := registry.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	writeModelManifest(t, root, "intent/local", `{"id":"intent-new","role":"intent","runtime":"local","entry":"model.gguf"}`)
+	store.err = errors.New("write failed")
+	swapCalls := 0
+	registry.swap = func(context.Context, Snapshot) error {
+		swapCalls++
+		return nil
+	}
+
+	if _, err := registry.Scan(context.Background()); err == nil {
+		t.Fatal("want persistence error")
+	}
+	if swapCalls != 0 {
+		t.Fatalf("swap calls = %d", swapCalls)
+	}
+	if active, ok := registry.Active(RoleIntent); !ok || active.ID != "intent-local" {
+		t.Fatalf("active intent = %#v", active)
+	}
+	if len(store.profiles) != 1 || store.profiles[0].ID != "intent-local" {
+		t.Fatalf("stored profiles = %#v", store.profiles)
+	}
+}
+
+func TestRegistryAssignsUniqueIDsToInvalidProfiles(t *testing.T) {
+	root := t.TempDir()
+	writeModelManifest(t, root, "intent/first", `{"role":"intent","runtime":"local","entry":"model.gguf"}`)
+	writeModelManifest(t, root, "intent/second", `{"role":"intent","runtime":"local","entry":"model.gguf"}`)
+	store := &fakeModelStore{}
+
+	snapshot, err := NewRegistry(root, store, nil).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Profiles) != 2 || snapshot.Profiles[0].ID == "" || snapshot.Profiles[0].ID == snapshot.Profiles[1].ID {
+		t.Fatalf("profiles = %#v", snapshot.Profiles)
+	}
+	for _, profile := range snapshot.Profiles {
+		if profile.Valid {
+			t.Fatalf("missing-id profile marked valid: %#v", profile)
+		}
 	}
 }
 

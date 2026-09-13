@@ -55,6 +55,7 @@ type Snapshot struct {
 
 type Store interface {
 	ReplaceSnapshot(context.Context, []Profile) error
+	List(context.Context) ([]Profile, error)
 }
 
 type Registry struct {
@@ -88,14 +89,24 @@ func (r *Registry) Scan(ctx context.Context) (Snapshot, error) {
 		}
 	}
 	snapshot := Snapshot{Profiles: profiles, Active: active}
-	if r.swap != nil {
-		if err := r.swap(ctx, snapshot); err != nil {
-			return snapshot, fmt.Errorf("swap model snapshot: %w", err)
-		}
-	}
+	var previous []Profile
 	if r.store != nil {
+		previous, err = r.store.List(ctx)
+		if err != nil {
+			return snapshot, fmt.Errorf("load stored model snapshot: %w", err)
+		}
 		if err := r.store.ReplaceSnapshot(ctx, profiles); err != nil {
 			return snapshot, fmt.Errorf("store model snapshot: %w", err)
+		}
+	}
+	if r.swap != nil {
+		if err := r.swap(ctx, snapshot); err != nil {
+			if r.store != nil {
+				if rollbackErr := r.store.ReplaceSnapshot(ctx, previous); rollbackErr != nil {
+					return snapshot, errors.Join(fmt.Errorf("swap model snapshot: %w", err), fmt.Errorf("restore model snapshot: %w", rollbackErr))
+				}
+			}
+			return snapshot, fmt.Errorf("swap model snapshot: %w", err)
 		}
 	}
 	r.mu.Lock()
@@ -136,6 +147,11 @@ func scan(root string) ([]Profile, error) {
 				continue
 			}
 			profiles = append(profiles, readProfile(root, roleDirectory.Name(), profilePath, manifestPath))
+		}
+	}
+	for i := range profiles {
+		if profiles[i].ID == "" {
+			profiles[i].ID = "invalid:" + profiles[i].Path
 		}
 	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].ID < profiles[j].ID })
