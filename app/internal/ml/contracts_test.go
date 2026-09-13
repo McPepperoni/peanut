@@ -51,8 +51,8 @@ func TestWakeGateRejectsInvalidFrame(t *testing.T) {
 	}
 }
 
-func TestKWSScoreMustBeFinite(t *testing.T) {
-	for _, score := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+func TestKWSScoreMustBeValid(t *testing.T) {
+	for _, score := range []float32{-0.01, 1.01, float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
 		if err := (kws.Result{Score: score}).Validate(); err == nil {
 			t.Fatalf("accepted KWS score %v", score)
 		}
@@ -79,8 +79,8 @@ func TestVADEndpointValues(t *testing.T) {
 	}
 }
 
-func TestVADProbabilityMustBeFinite(t *testing.T) {
-	for _, probability := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+func TestVADProbabilityMustBeValid(t *testing.T) {
+	for _, probability := range []float32{-0.01, 1.01, float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
 		if err := (vad.Result{Probability: probability}).Validate(); err == nil {
 			t.Fatalf("accepted VAD probability %v", probability)
 		}
@@ -121,8 +121,8 @@ func TestSpeakerFailureIsAdvisory(t *testing.T) {
 	}
 }
 
-func TestSpeakerScoreMustBeFinite(t *testing.T) {
-	for _, score := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+func TestSpeakerScoreMustBeValid(t *testing.T) {
+	for _, score := range []float32{-0.01, 1.01, float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
 		if err := (speaker.Result{Score: score}).Validate(); err == nil {
 			t.Fatalf("accepted speaker score %v", score)
 		}
@@ -139,5 +139,8 @@ func TestTTSResultRequiresNormalizedNonEmptyAudio(t *testing.T) {
 	}
 	if err := (tts.Result{Audio: audio.Audio{SampleRate: audio.SampleRate, Channels: audio.Channels}}).Validate(); err == nil {
 		t.Fatal("accepted empty TTS audio")
+	}
+	if err := (tts.Result{Audio: audio.Audio{SampleRate: audio.SampleRate, Channels: audio.Channels, Samples: []float32{2}}}).Validate(); err == nil {
+		t.Fatal("accepted out-of-range TTS audio")
 	}
 }

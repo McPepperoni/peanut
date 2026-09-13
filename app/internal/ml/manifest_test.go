@@ -49,10 +49,12 @@ func TestManifestRequiresPositiveThreads(t *testing.T) {
 }
 
 func TestManifestRequiresCPUProvider(t *testing.T) {
-	manifest := validTestManifest(t)
-	manifest.Provider = ""
-	if err := manifest.Validate(); !errors.Is(err, ErrModelInvalid) {
-		t.Fatalf("provider error = %v, want invalid model", err)
+	for _, provider := range []string{"", "CPU", " cpu", "cpu "} {
+		manifest := validTestManifest(t)
+		manifest.Provider = provider
+		if err := manifest.Validate(); !errors.Is(err, ErrModelInvalid) {
+			t.Fatalf("provider %q error = %v, want invalid model", provider, err)
+		}
 	}
 }
 
@@ -72,6 +74,53 @@ func TestManifestRejectsEmptyModelDirectories(t *testing.T) {
 				t.Fatalf("empty directory error = %v, want invalid model", err)
 			}
 		})
+	}
+}
+
+func TestManifestRequiresBundleFiles(t *testing.T) {
+	for _, model := range []struct {
+		name string
+		file string
+		path func(Paths) string
+	}{
+		{"KWS", "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx", func(paths Paths) string { return paths.KWS }},
+		{"KWS", "decoder-epoch-12-avg-2-chunk-16-left-64.onnx", func(paths Paths) string { return paths.KWS }},
+		{"KWS", "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx", func(paths Paths) string { return paths.KWS }},
+		{"KWS", "tokens.txt", func(paths Paths) string { return paths.KWS }},
+		{"STT", "model.int8.onnx", func(paths Paths) string { return paths.STT }},
+		{"STT", "tokens.txt", func(paths Paths) string { return paths.STT }},
+		{"TTS", "en_GB-cori-medium.onnx", func(paths Paths) string { return paths.TTS }},
+		{"TTS", "tokens.txt", func(paths Paths) string { return paths.TTS }},
+		{"TTS", "espeak-ng-data", func(paths Paths) string { return paths.TTS }},
+	} {
+		t.Run(model.name+"/"+model.file, func(t *testing.T) {
+			manifest := validTestManifest(t)
+			if err := os.RemoveAll(filepath.Join(model.path(manifest.Paths), model.file)); err != nil {
+				t.Fatal(err)
+			}
+			if err := manifest.Validate(); !errors.Is(err, ErrModelInvalid) {
+				t.Fatalf("missing %s file error = %v, want invalid model", model.file, err)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsEmptyBundleFiles(t *testing.T) {
+	for _, model := range []struct {
+		file string
+		path func(Paths) string
+	}{
+		{"tokens.txt", func(paths Paths) string { return paths.KWS }},
+		{"model.int8.onnx", func(paths Paths) string { return paths.STT }},
+		{"en_GB-cori-medium.onnx", func(paths Paths) string { return paths.TTS }},
+	} {
+		manifest := validTestManifest(t)
+		if err := os.WriteFile(filepath.Join(model.path(manifest.Paths), model.file), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.Validate(); !errors.Is(err, ErrModelInvalid) {
+			t.Fatalf("empty %s error = %v, want invalid model", model.file, err)
+		}
 	}
 }
 
@@ -131,6 +180,25 @@ func emptyFile(t *testing.T, root, name string) string {
 func modelDir(t *testing.T, root, name string) string {
 	t.Helper()
 	path := mkdir(t, root, name)
-	touch(t, path, "model")
+	switch name {
+	case KWSBundle:
+		for _, file := range []string{
+			"encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+			"decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+			"joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+			"tokens.txt",
+		} {
+			touch(t, path, file)
+		}
+	case STTBundle:
+		for _, file := range []string{"model.int8.onnx", "tokens.txt"} {
+			touch(t, path, file)
+		}
+	case TTSBundle:
+		for _, file := range []string{"en_GB-cori-medium.onnx", "tokens.txt"} {
+			touch(t, path, file)
+		}
+		mkdir(t, path, "espeak-ng-data")
+	}
 	return path
 }

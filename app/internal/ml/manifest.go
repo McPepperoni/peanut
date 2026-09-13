@@ -54,6 +54,33 @@ func (m Manifest) Validate() error {
 			return err
 		}
 	}
+	for _, model := range []struct {
+		name, path string
+	}{
+		{"KWS encoder", filepath.Join(m.Paths.KWS, "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx")},
+		{"KWS decoder", filepath.Join(m.Paths.KWS, "decoder-epoch-12-avg-2-chunk-16-left-64.onnx")},
+		{"KWS joiner", filepath.Join(m.Paths.KWS, "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx")},
+		{"KWS tokens", filepath.Join(m.Paths.KWS, "tokens.txt")},
+		{"STT model", filepath.Join(m.Paths.STT, "model.int8.onnx")},
+		{"STT tokens", filepath.Join(m.Paths.STT, "tokens.txt")},
+		{"TTS model", filepath.Join(m.Paths.TTS, "en_GB-cori-medium.onnx")},
+		{"TTS tokens", filepath.Join(m.Paths.TTS, "tokens.txt")},
+	} {
+		if err := validateRequiredFile(model.name, model.path); err != nil {
+			return err
+		}
+	}
+	if info, err := os.Stat(filepath.Join(m.Paths.TTS, "espeak-ng-data")); err != nil || !info.IsDir() {
+		return fmt.Errorf("%w: TTS espeak-ng-data directory", ErrModelInvalid)
+	}
+	return nil
+}
+
+func validateRequiredFile(name, path string) error {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("%w: %s at %q must be a non-empty file", ErrModelInvalid, name, path)
+	}
 	return nil
 }
 

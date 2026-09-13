@@ -1,6 +1,9 @@
 package audio
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestNewFrameRequires320Samples(t *testing.T) {
 	if _, err := NewFrame(make([]float32, 319)); err == nil {
@@ -53,5 +56,19 @@ func TestAudioTypesValidateBoundaryValues(t *testing.T) {
 	}
 	if err := (Audio{SampleRate: SampleRate, Channels: Channels}).Validate(); err == nil {
 		t.Fatal("Audio.Validate accepted empty samples")
+	}
+}
+
+func TestAudioTypesRejectNonFiniteAndOutOfRangePCM(t *testing.T) {
+	bad := []float32{-1.01, 1.01, float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))}
+	for _, sample := range bad {
+		frame := Frame{Samples: make([]float32, FrameSamples)}
+		frame.Samples[0] = sample
+		if err := frame.Validate(); err == nil {
+			t.Errorf("Frame.Validate accepted %v", sample)
+		}
+		if err := (Audio{SampleRate: SampleRate, Channels: Channels, Samples: []float32{sample}}).Validate(); err == nil {
+			t.Errorf("Audio.Validate accepted %v", sample)
+		}
 	}
 }

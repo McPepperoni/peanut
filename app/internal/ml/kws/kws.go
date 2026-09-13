@@ -15,7 +15,7 @@ type Result struct {
 }
 
 func (r Result) Validate() error {
-	if math.IsNaN(float64(r.Score)) || math.IsInf(float64(r.Score), 0) {
+	if r.Score < 0 || r.Score > 1 || math.IsNaN(float64(r.Score)) || math.IsInf(float64(r.Score), 0) {
 		return errors.New("invalid KWS score")
 	}
 	return nil
