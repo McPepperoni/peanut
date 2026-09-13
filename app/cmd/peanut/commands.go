@@ -21,6 +21,8 @@ type commandDependencies struct {
 	Synthesizer tts.Synthesizer
 	Transcriber stt.Transcriber
 	Speaker     mlspeaker.SpeakerIdentifier
+	Enroll      func(context.Context, string) error
+	Run         func(context.Context) error
 }
 
 func dispatch(ctx context.Context, args []string, dependencies commandDependencies, output io.Writer) error {
@@ -41,7 +43,7 @@ func dispatch(ctx context.Context, args []string, dependencies commandDependenci
 		}
 		return dependencies.Player.Play(ctx, result.Audio)
 	case "transcribe":
-		if len(args) != 2 || dependencies.Transcriber == nil || dependencies.Speaker == nil {
+		if len(args) != 2 || dependencies.Transcriber == nil {
 			return usage()
 		}
 		input, err := readWAV(args[1])
@@ -52,8 +54,22 @@ func dispatch(ctx context.Context, args []string, dependencies commandDependenci
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(output, "speaker=%s\n%s\n", speaker.Name(dependencies.Speaker.Identify(ctx, input)), result.Text)
+		speakerName := "unknown"
+		if dependencies.Speaker != nil {
+			speakerName = speaker.Name(dependencies.Speaker.Identify(ctx, input))
+		}
+		_, err = fmt.Fprintf(output, "speaker=%s\n%s\n", speakerName, result.Text)
 		return err
+	case "enroll":
+		if len(args) != 2 || dependencies.Enroll == nil {
+			return usage()
+		}
+		return dependencies.Enroll(ctx, args[1])
+	case "run":
+		if len(args) != 1 || dependencies.Run == nil {
+			return usage()
+		}
+		return dependencies.Run(ctx)
 	case "test-audio":
 		if len(args) != 2 || dependencies.Player == nil {
 			return usage()
@@ -79,5 +95,5 @@ func readWAV(path string) (audio.Audio, error) {
 }
 
 func usage() error {
-	return errors.New("usage: speak <text> | transcribe <input.wav> | test-audio <input.wav> (speak/transcribe require configured models)")
+	return errors.New("usage: run | enroll <id> | speak <text> | transcribe <input.wav> | test-audio <input.wav> (speak/transcribe require configured models)")
 }

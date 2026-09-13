@@ -59,6 +59,42 @@ func TestDispatchTranscribeUsesUnknownSpeakerFallback(t *testing.T) {
 	}
 }
 
+func TestDispatchTranscribeWithoutSpeakerIdentifier(t *testing.T) {
+	path := writeTestWAV(t)
+	var output bytes.Buffer
+	err := dispatch(context.Background(), []string{"transcribe", path}, commandDependencies{Transcriber: fakeTranscriber{}}, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "speaker=unknown\nhello\n" {
+		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestDispatchEnrollAndRun(t *testing.T) {
+	var enrolled string
+	ran := false
+	dependencies := commandDependencies{
+		Enroll: func(_ context.Context, id string) error {
+			enrolled = id
+			return nil
+		},
+		Run: func(context.Context) error {
+			ran = true
+			return nil
+		},
+	}
+	if err := dispatch(context.Background(), []string{"enroll", "alice"}, dependencies, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatch(context.Background(), []string{"run"}, dependencies, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if enrolled != "alice" || !ran {
+		t.Fatalf("enrolled = %q, ran = %v", enrolled, ran)
+	}
+}
+
 func TestDispatchTestAudio(t *testing.T) {
 	path := writeTestWAV(t)
 	player := &playback.Fake{}
