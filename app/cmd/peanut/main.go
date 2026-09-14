@@ -67,6 +67,7 @@ func serveAPI(ctx context.Context, db *sqlite.DB) error {
 	if err != nil {
 		return err
 	}
+	server.SetBoundAddress(address)
 	httpServer := &http.Server{Addr: address, Handler: server.Handler()}
 	go func() {
 		<-ctx.Done()

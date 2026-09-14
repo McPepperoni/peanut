@@ -115,3 +115,54 @@ PASS: exit 0, no output
 ```
 
 Concerns: `peanut run` shares the reloadable owner between API and coordinator. `peanut api` remains an API-only process by design; it now performs the owner swap on reload, but has no coordinator consumer in that process.
+
+## Review fix: immutable API authentication boundary
+
+- `boundLAN` now starts true when the startup address is non-loopback or `AllowLAN` is true.
+- `SetBoundAddress` refreshes the bind boundary from the address returned by `Address(ctx)` before `ListenAndServe` in both API entry points.
+- Authentication now requires a bearer token when `boundLAN` or current `AllowLAN` is true; empty tokens still return JSON 500.
+- Added an external SQLite downgrade regression proving unauthenticated requests remain rejected after `AllowLAN` is changed to false outside the API. Existing PUT downgrade rejection remains covered.
+- Removed the contradictory OpenAPI global bearer-security declaration; the document-level description now states the conditional LAN behavior.
+
+RED:
+
+```text
+$env:GOCACHE=(Join-Path (Get-Location) '.gocache-task2-red3'); go test ./internal/api -run TestServerKeepsAuthenticationAfterExternalLANDowngrade -count=1 -v
+=== RUN   TestServerKeepsAuthenticationAfterExternalLANDowngrade
+    server_test.go:119: downgraded request status = 200, body = {"home_assistant":{"url":"http://127.0.0.1:8123","token":"","timeout_seconds":10},"api":{"address":"0.0.0.0:8080","allow_lan":false,"pairing_token":"[REDACTED]"}}
+--- FAIL: TestServerKeepsAuthenticationAfterExternalLANDowngrade (0.02s)
+FAIL
+FAIL	peanut/internal/api	1.003s
+FAIL
+```
+
+GREEN:
+
+```text
+$env:GOCACHE=(Join-Path (Get-Location) '.gocache-task2-red3'); go test ./internal/api ./cmd/peanut -run 'TestServerKeepsAuthenticationAfterExternalLANDowngrade|TestServerRejectsLANAuthenticationDowngradeUntilRestart|TestServerFailsClosedWhenLANPairingTokenIsEmpty|TestModelsAPIReloadReachesRuntimeSwapBoundary|TestRuntimeRegistryReloadInvokesLiveSwapBoundary' -count=1 -v
+=== RUN   TestServerRejectsLANAuthenticationDowngradeUntilRestart
+--- PASS: TestServerRejectsLANAuthenticationDowngradeUntilRestart (0.03s)
+=== RUN   TestServerKeepsAuthenticationAfterExternalLANDowngrade
+--- PASS: TestServerKeepsAuthenticationAfterExternalLANDowngrade (0.02s)
+=== RUN   TestServerFailsClosedWhenLANPairingTokenIsEmpty
+--- PASS: TestServerFailsClosedWhenLANPairingTokenIsEmpty (0.01s)
+PASS
+ok  peanut/internal/api 0.968s
+=== RUN   TestModelsAPIReloadReachesRuntimeSwapBoundary
+--- PASS: TestModelsAPIReloadReachesRuntimeSwapBoundary (0.03s)
+=== RUN   TestRuntimeRegistryReloadInvokesLiveSwapBoundary
+--- PASS: TestRuntimeRegistryReloadInvokesLiveSwapBoundary (0.01s)
+PASS
+ok  peanut/cmd/peanut 1.277s
+```
+
+Required verification:
+
+```text
+cd app
+$env:GOCACHE=(Join-Path (Get-Location) '.gocache-task2-red3'); go test ./... -count=1
+PASS: all packages; exit 0
+
+$env:GOCACHE=(Join-Path (Get-Location) '.gocache-task2-red3'); go vet ./...
+PASS: exit 0, no output
+```

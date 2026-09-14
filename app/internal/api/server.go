@@ -47,7 +47,7 @@ type Server struct {
 func NewServer(db *sqlite.DB, refresher Refresher, modelReloader ModelReloader) *Server {
 	server := &Server{config: sqlite.NewConfigStore(db), refresher: refresher, modelReloader: modelReloader}
 	if cfg, err := server.load(context.Background()); err == nil {
-		server.boundLAN = cfg.API.AllowLAN && !isLoopbackAddress(cfg.API.Address)
+		server.boundLAN = cfg.API.AllowLAN || !isLoopbackAddress(cfg.API.Address)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/config", server.handleConfig)
@@ -68,6 +68,10 @@ func (s *Server) Address(ctx context.Context) (string, error) {
 	return cfg.API.Address, err
 }
 
+func (s *Server) SetBoundAddress(address string) {
+	s.boundLAN = !isLoopbackAddress(address)
+}
+
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg, err := s.load(r.Context())
@@ -75,7 +79,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, "configuration unavailable")
 			return
 		}
-		if cfg.API.AllowLAN {
+		if s.boundLAN || cfg.API.AllowLAN {
 			if cfg.API.PairingToken == "" {
 				writeError(w, http.StatusInternalServerError, "authentication unavailable")
 				return

@@ -147,6 +147,7 @@ func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err e
 	if err != nil {
 		return err
 	}
+	server.SetBoundAddress(address)
 	httpServer := &http.Server{Addr: address, Handler: server.Handler()}
 	return runRuntimeProcesses(
 		runCtx,

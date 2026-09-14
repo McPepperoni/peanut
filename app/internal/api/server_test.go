@@ -97,6 +97,33 @@ func TestServerRejectsLANAuthenticationDowngradeUntilRestart(t *testing.T) {
 	}
 }
 
+func TestServerKeepsAuthenticationAfterExternalLANDowngrade(t *testing.T) {
+	db := apiDB(t)
+	store := sqlite.NewConfigStore(db)
+	cfg := loadConfig(t, store)
+	cfg.API.Address = "0.0.0.0:8080"
+	cfg.API.AllowLAN = true
+	cfg.API.PairingToken = "pairing-secret"
+	if err := store.Save(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, nil, nil)
+
+	cfg.API.AllowLAN = false
+	if err := store.Save(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	unauthorized := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("downgraded request status = %d, body = %s", unauthorized.Code, unauthorized.Body.String())
+	}
+	authorized := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "pairing-secret")
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("authorized request status = %d, body = %s", authorized.Code, authorized.Body.String())
+	}
+}
+
 func TestServerFailsClosedWhenLANPairingTokenIsEmpty(t *testing.T) {
 	db := apiDB(t)
 	store := sqlite.NewConfigStore(db)
