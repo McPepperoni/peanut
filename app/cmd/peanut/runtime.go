@@ -212,12 +212,8 @@ type configuredRuntime struct {
 }
 
 func newConfiguredRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB) (*configuredRuntime, error) {
-	var modelStore models.Store
-	if db != nil {
-		modelStore = sqlite.NewModelStore(db)
-	}
 	liveModels := newReloadableModels(buildModelSet(cfg))
-	modelRegistry := models.NewRegistry(cfg.Models.Root, modelStore, liveModels.Swap)
+	modelRegistry := newRuntimeModelRegistry(cfg, db, liveModels)
 	if _, err := modelRegistry.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("scan model roles at %s: %w", cfg.Models.Root, err)
 	}
@@ -260,6 +256,14 @@ func newConfiguredRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB)
 		return nil, err
 	}
 	return &configuredRuntime{coordinator: coordinator, homeAssistant: homeAssistant, modelRegistry: modelRegistry, capture: systemCapture, player: systemPlayer}, nil
+}
+
+func newRuntimeModelRegistry(cfg config.Config, db *sqlite.DB, owner *reloadableModels) *models.Registry {
+	var modelStore models.Store
+	if db != nil {
+		modelStore = sqlite.NewModelStore(db)
+	}
+	return models.NewRegistry(cfg.Models.Root, modelStore, owner.Swap)
 }
 
 func buildModelSet(cfg config.Config) modelSetBuilder {

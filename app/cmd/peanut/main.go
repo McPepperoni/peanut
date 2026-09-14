@@ -10,7 +10,6 @@ import (
 
 	"peanut/internal/api"
 	"peanut/internal/config"
-	"peanut/internal/models"
 	"peanut/internal/providers"
 	"peanut/internal/storage/sqlite"
 )
@@ -61,7 +60,8 @@ func serveAPI(ctx context.Context, db *sqlite.DB) error {
 	if err := sqlite.NewConfigStore(db).Load(ctx, &cfg); err != nil {
 		return err
 	}
-	modelRegistry := models.NewRegistry(cfg.Models.Root, sqlite.NewModelStore(db), nil)
+	modelOwner := newReloadableModels(buildModelSet(cfg))
+	modelRegistry := newRuntimeModelRegistry(cfg, db, modelOwner)
 	server := api.NewServer(db, provider, modelRegistry)
 	address, err := server.Address(ctx)
 	if err != nil {

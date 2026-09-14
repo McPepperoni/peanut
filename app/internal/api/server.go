@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"time"
 
@@ -40,10 +41,14 @@ type Server struct {
 	refresher     Refresher
 	modelReloader ModelReloader
 	handler       http.Handler
+	boundLAN      bool
 }
 
 func NewServer(db *sqlite.DB, refresher Refresher, modelReloader ModelReloader) *Server {
 	server := &Server{config: sqlite.NewConfigStore(db), refresher: refresher, modelReloader: modelReloader}
+	if cfg, err := server.load(context.Background()); err == nil {
+		server.boundLAN = cfg.API.AllowLAN && !isLoopbackAddress(cfg.API.Address)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/config", server.handleConfig)
 	mux.HandleFunc("/api/v1/config/pairing-token", server.handlePairingToken)
@@ -71,6 +76,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		if cfg.API.AllowLAN {
+			if cfg.API.PairingToken == "" {
+				writeError(w, http.StatusInternalServerError, "authentication unavailable")
+				return
+			}
 			provided := ""
 			const prefix = "Bearer "
 			if value := r.Header.Get("Authorization"); len(value) > len(prefix) && value[:len(prefix)] == prefix {
@@ -192,6 +201,10 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		if update.API.AllowLAN != nil {
 			cfg.API.AllowLAN = *update.API.AllowLAN
 		}
+		if s.boundLAN && (!cfg.API.AllowLAN || isLoopbackAddress(cfg.API.Address)) {
+			writeError(w, http.StatusBadRequest, "restart required for LAN API binding changes")
+			return
+		}
 	}
 	if err := cfg.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -208,6 +221,14 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, publicConfig(cfg))
+}
+
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	return host == "localhost" || net.ParseIP(host).IsLoopback()
 }
 
 func (s *Server) handlePairingToken(w http.ResponseWriter, r *http.Request) {

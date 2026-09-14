@@ -70,7 +70,7 @@ func TestServerRequiresBearerAuthWhenLANEnabled(t *testing.T) {
 	}
 }
 
-func TestServerReadsAuthenticationConfigForEveryRequest(t *testing.T) {
+func TestServerRejectsLANAuthenticationDowngradeUntilRestart(t *testing.T) {
 	db := apiDB(t)
 	store := sqlite.NewConfigStore(db)
 	cfg := loadConfig(t, store)
@@ -82,13 +82,40 @@ func TestServerReadsAuthenticationConfigForEveryRequest(t *testing.T) {
 	}
 	server := NewServer(db, nil, nil)
 
-	updated := request(t, server.Handler(), http.MethodPut, "/api/v1/config", `{"api":{"address":"127.0.0.1:8080","allow_lan":false}}`, "pairing-secret")
-	if updated.Code != http.StatusOK {
-		t.Fatalf("update status = %d, body = %s", updated.Code, updated.Body.String())
+	for _, body := range []string{
+		`{"api":{"allow_lan":false}}`,
+		`{"api":{"address":"127.0.0.1:8080"}}`,
+	} {
+		response := request(t, server.Handler(), http.MethodPut, "/api/v1/config", body, "pairing-secret")
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "restart required") {
+			t.Fatalf("body %s: status = %d, response = %s", body, response.Code, response.Body.String())
+		}
 	}
-	response := request(t, server.Handler(), http.MethodGet, "/api/v1/config", "", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("status after disabling LAN = %d, body = %s", response.Code, response.Body.String())
+	cfg = loadConfig(t, store)
+	if !cfg.API.AllowLAN || cfg.API.Address != "0.0.0.0:8080" {
+		t.Fatalf("stored API config changed: %+v", cfg.API)
+	}
+}
+
+func TestServerFailsClosedWhenLANPairingTokenIsEmpty(t *testing.T) {
+	db := apiDB(t)
+	store := sqlite.NewConfigStore(db)
+	cfg := loadConfig(t, store)
+	cfg.API.Address = "0.0.0.0:8080"
+	cfg.API.AllowLAN = true
+	cfg.API.PairingToken = ""
+	if err := store.Save(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer ")
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, req)
+
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "authentication unavailable") {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 
