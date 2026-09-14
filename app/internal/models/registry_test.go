@@ -121,6 +121,27 @@ func TestRegistryKeepsPriorRoleWhenReloadFails(t *testing.T) {
 	}
 }
 
+func TestFreshRegistryRejectsPersistedActiveProfileWithInvalidChecksum(t *testing.T) {
+	root := t.TempDir()
+	sum := sha256.Sum256([]byte("model"))
+	writeModelManifest(t, root, "intent/local", fmt.Sprintf(`{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf","sha256":"%x"}`, sum))
+	store := &fakeModelStore{}
+	if _, err := NewRegistry(root, store, nil).Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "intent", "local", "model.gguf"), []byte("corrupt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := NewRegistry(root, store, nil).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.Active[RoleIntent]; ok {
+		t.Fatalf("stale active profile = %#v", snapshot.Active)
+	}
+}
+
 func TestRegistryDoesNotSwapWhenPersistenceFails(t *testing.T) {
 	root := t.TempDir()
 	writeModelManifest(t, root, "intent/local", `{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf"}`)

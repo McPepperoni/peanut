@@ -69,7 +69,7 @@ func TestModelStoreRejectsUnsafeEntries(t *testing.T) {
 	}
 }
 
-func TestFreshRegistryPreservesPersistedActiveRoleOnInvalidReload(t *testing.T) {
+func TestFreshRegistryRejectsPersistedActiveRoleOnInvalidReload(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "peanut.db"))
 	if err != nil {
@@ -92,24 +92,24 @@ func TestFreshRegistryPreservesPersistedActiveRoleOnInvalidReload(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if active, ok := snapshot.Active[models.RoleIntent]; !ok || active.ID != "intent-local" {
+	if _, ok := snapshot.Active[models.RoleIntent]; ok {
 		t.Fatalf("snapshot active = %#v", snapshot.Active)
 	}
-	if active, ok := registry.Active(models.RoleIntent); !ok || active.ID != "intent-local" {
+	if active, ok := registry.Active(models.RoleIntent); ok {
 		t.Fatalf("registry active = %#v", active)
 	}
-	var activeID string
-	if err := db.QueryRowContext(ctx, `SELECT id FROM models WHERE role = 'intent' AND active = 1`).Scan(&activeID); err != nil {
+	var activeCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM models WHERE role = 'intent' AND active = 1`).Scan(&activeCount); err != nil {
 		t.Fatal(err)
 	}
-	if activeID != "intent-local" {
-		t.Fatalf("stored active = %q", activeID)
+	if activeCount != 0 {
+		t.Fatalf("stored active count = %d", activeCount)
 	}
 	stored, err := store.List(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stored) != 2 {
+	if len(stored) != 1 || stored[0].Valid {
 		t.Fatalf("stored profiles = %#v", stored)
 	}
 }

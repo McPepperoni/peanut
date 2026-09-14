@@ -91,13 +91,6 @@ func (r *Registry) Scan(ctx context.Context) (Snapshot, error) {
 	r.mu.RLock()
 	active := cloneActive(r.active)
 	r.mu.RUnlock()
-	for _, profile := range previous {
-		if profile.Active {
-			if _, ok := active[profile.Role]; !ok {
-				active[profile.Role] = profile
-			}
-		}
-	}
 	normalizeProfiles(profiles, active)
 	selected := selectProfiles(profiles)
 	for role, profile := range selected {
