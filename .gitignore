@@ -2,11 +2,14 @@
 /assets/
 /dev/home-assistant-core/
 /local-model/
+/models/
 /data/
 /app/data/
 *.db
 *.db-shm
 *.db-wal
 /.gocache/
+/.gocache*/
+/app/.gocache*/
 /.gomodcache/
 *.db-journal

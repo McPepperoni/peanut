@@ -1,16 +1,71 @@
 # Local model bundles
 
-Peanut uses local sherpa-onnx models only. Download these official bundles outside the repository, then record their paths in SQLite configuration:
+Peanut discovers local model profiles under the configured `Models.Root` directory (default `models`). Runtime configuration, including that root, lives in SQLite; model bytes never do.
 
-- `sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01-mobile`
-- `silero_vad.onnx`
-- `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17`
-- `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`
-- `vits-piper-en_GB-cori-medium`
+## Layout and manifest
 
-Use the [sherpa-onnx release bundles](https://github.com/k2-fsa/sherpa-onnx/releases). Configure provider `cpu` and a positive thread count. Default builds and unit tests do not require CUDA, cloud inference, CGO, or a native runtime.
+Each profile has this shape:
 
-Do not commit model bundles, extracted model files, source archives, or recordings. Keep them under `local-model/` or another local path outside Git. No thinking is needed: this runtime executes the configured local models directly.
+```text
+models/<role>/<profile>/model.json
+models/<role>/<profile>/<entry and companion files>
+```
+
+Allowed roles are `kws`, `vad`, `stt`, `speaker`, `tts`, and `intent`. Example:
+
+```json
+{
+  "id": "intent-local",
+  "role": "intent",
+  "runtime": "local",
+  "entry": "model.gguf",
+  "sha256": "",
+  "threads": 4
+}
+```
+
+Manifest fields:
+
+- `id`: stable profile identifier; duplicate IDs are invalid.
+- `role`: one of the six runtime roles and must match the parent directory.
+- `runtime`: adapter/executable name used by the role; non-empty.
+- `entry`: relative regular file used as the profile entry point; it cannot escape the profile directory.
+- `sha256`: optional checksum for `entry`, compared case-insensitively; empty disables the checksum check.
+- `threads`: declared profile thread count; keep it positive and aligned with the SQLite CPU configuration.
+
+Unknown manifest fields are rejected. Invalid profiles are reported without discarding a previously active valid role.
+
+Download official bundles from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases), extract them into their profile directories, and add the manifest. Bundle roles may keep their required companion files beside `entry`.
+
+Create a checksum before filling `sha256`:
+
+```powershell
+(Get-FileHash .\models\intent\local\model.gguf -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+```sh
+sha256sum models/intent/local/model.gguf
+```
+
+Copy the resulting 64-character hexadecimal value into `model.json`. Do not commit model bundles, extracted files, source archives, or recordings. `models/` is ignored by Git, and model files are never written to SQLite.
+
+## Verify and reload
+
+From the repository root, after building the binary:
+
+```powershell
+.\build\peanut model list
+.\build\peanut model verify
+```
+
+```sh
+./build/peanut model list
+./build/peanut model verify
+```
+
+`model verify` returns an error when any discovered profile is invalid. `GET /api/v1/models` rescans manifests, verifies checksums, reconciles SQLite metadata, and attempts a complete runtime reload. A failed reload keeps the prior active runtime.
+
+Peanut always uses CPU execution. Configure provider `cpu` and a positive SQLite thread count. Pure builds and unit tests do not require CUDA, cloud inference, CGO, model downloads, or Home Assistant.
 
 ## Optional native build
 
@@ -35,7 +90,7 @@ CGO_LDFLAGS="-L/opt/sherpa-onnx/lib -Wl,-rpath,/opt/sherpa-onnx/lib" \
 go build -tags sherpa -o ../build/peanut ./cmd/peanut
 ```
 
-Native load/inference smoke expects the five bundles directly under `PEANUT_MODEL_ROOT` and runs one second of silent 16 kHz mono audio through SenseVoice:
+Native load/inference smoke is optional, expects the five official bundles directly under a test-only `PEANUT_MODEL_ROOT`, and runs one second of silent 16 kHz mono audio through SenseVoice. This environment variable selects test fixtures only; it is not a runtime configuration mechanism.
 
 ```powershell
 $env:PEANUT_MODEL_ROOT = 'C:\models'

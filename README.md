@@ -4,13 +4,28 @@ Local-first, CPU-only voice runtime for Raspberry Pi 5 Linux ARM64 and desktop d
 
 All Go source lives under `app/`. Generated binaries belong in root `build/`; models and runtime data stay outside Git.
 
-## Verify
+## Development verification
+
+PowerShell (Windows):
+
+```powershell
+Set-Location app
+go test ./...
+go vet ./...
+go build -o ../build/peanut ./cmd/peanut
+```
+
+POSIX shell (Linux/macOS):
 
 ```sh
 cd app
 go test ./...
 go vet ./...
+go build -o ../build/peanut ./cmd/peanut
 ```
+
+The command writes `build/peanut`. On Windows, use `-o ../build/peanut.exe` when an `.exe` suffix is required.
+These pure checks do not need model bytes, CUDA, CGO, cloud services, or Home Assistant.
 
 ## Build
 
@@ -19,7 +34,9 @@ cd app
 go build -o ../build/peanut ./cmd/peanut
 ```
 
-The production artifact is the native CPU-only binary at root `build/peanut`. Qwen intent parsing runs with thinking disabled; Peanut does not generate conversational responses.
+The production artifact is the native CPU-only binary at root `build/peanut` (or `build/peanut.exe` when named with that suffix). Intent parsing runs with thinking disabled; Peanut does not generate conversational responses.
+
+See [`docs/pi5-validation.md`](docs/pi5-validation.md) for the platform matrix, Raspberry Pi 5 checks, model installation, and native smoke-test boundary.
 
 ## Production installer
 
