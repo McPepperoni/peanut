@@ -7,8 +7,10 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"peanut/internal/config"
@@ -18,6 +20,8 @@ import (
 )
 
 const Redacted = "[REDACTED]"
+
+var errConfigUnavailable = errors.New("configuration unavailable")
 
 //go:embed openapi.json
 var openAPIDocument []byte
@@ -42,6 +46,7 @@ type Server struct {
 	modelReloader ModelReloader
 	handler       http.Handler
 	boundLAN      bool
+	configMu      sync.Mutex
 }
 
 func NewServer(db *sqlite.DB, refresher Refresher, modelReloader ModelReloader) *Server {
@@ -74,6 +79,10 @@ func (s *Server) SetBoundAddress(address string) {
 
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicDocumentationPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		cfg, err := s.load(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "configuration unavailable")
@@ -96,6 +105,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func publicDocumentationPath(path string) bool {
+	return path == "/docs" || path == "/scalar.js" || path == "/api/v1/openapi.json"
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -176,45 +189,52 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid configuration")
 		return
 	}
-	cfg, err := s.load(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "configuration unavailable")
+	if update.API != nil && update.API.PairingToken != nil && *update.API.PairingToken != Redacted {
+		writeError(w, http.StatusBadRequest, "pairing token can only be changed via POST /api/v1/config/pairing-token")
 		return
 	}
 	refresh := false
-	if update.HomeAssistant != nil {
-		refresh = true
-		if update.HomeAssistant.URL != nil {
-			cfg.HomeAssistant.URL = *update.HomeAssistant.URL
+	invalid := false
+	cfg, err := s.updateStoredConfig(r.Context(), func(cfg *config.Config) error {
+		if update.HomeAssistant != nil {
+			refresh = true
+			if update.HomeAssistant.URL != nil {
+				cfg.HomeAssistant.URL = *update.HomeAssistant.URL
+			}
+			if update.HomeAssistant.Token != nil && *update.HomeAssistant.Token != Redacted {
+				cfg.HomeAssistant.Token = *update.HomeAssistant.Token
+			}
+			if update.HomeAssistant.TimeoutSeconds != nil {
+				cfg.HomeAssistant.Timeout = time.Duration(*update.HomeAssistant.TimeoutSeconds) * time.Second
+			}
 		}
-		if update.HomeAssistant.Token != nil && *update.HomeAssistant.Token != Redacted {
-			cfg.HomeAssistant.Token = *update.HomeAssistant.Token
+		if update.API != nil {
+			if update.API.Address != nil {
+				cfg.API.Address = *update.API.Address
+			}
+			if update.API.AllowLAN != nil {
+				cfg.API.AllowLAN = *update.API.AllowLAN
+			}
+			if s.boundLAN && (!cfg.API.AllowLAN || isLoopbackAddress(cfg.API.Address)) {
+				invalid = true
+				return errors.New("restart required for LAN API binding changes")
+			}
 		}
-		if update.HomeAssistant.TimeoutSeconds != nil {
-			cfg.HomeAssistant.Timeout = time.Duration(*update.HomeAssistant.TimeoutSeconds) * time.Second
+		if err := cfg.Validate(); err != nil {
+			invalid = true
+			return err
 		}
-	}
-	if update.API != nil {
-		if update.API.PairingToken != nil && *update.API.PairingToken != Redacted {
-			writeError(w, http.StatusBadRequest, "pairing token can only be changed via POST /api/v1/config/pairing-token")
+		return nil
+	})
+	if err != nil {
+		if invalid {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if update.API.Address != nil {
-			cfg.API.Address = *update.API.Address
-		}
-		if update.API.AllowLAN != nil {
-			cfg.API.AllowLAN = *update.API.AllowLAN
-		}
-		if s.boundLAN && (!cfg.API.AllowLAN || isLoopbackAddress(cfg.API.Address)) {
-			writeError(w, http.StatusBadRequest, "restart required for LAN API binding changes")
+		if errors.Is(err, errConfigUnavailable) {
+			writeError(w, http.StatusInternalServerError, "configuration unavailable")
 			return
 		}
-	}
-	if err := cfg.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.config.Save(r.Context(), cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, "configuration write failed")
 		return
 	}
@@ -247,13 +267,14 @@ func (s *Server) handlePairingToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := base64.RawURLEncoding.EncodeToString(bytes)
-	cfg, err := s.load(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "configuration unavailable")
-		return
-	}
-	cfg.API.PairingToken = token
-	if err := s.config.Save(r.Context(), cfg); err != nil {
+	if _, err := s.updateStoredConfig(r.Context(), func(cfg *config.Config) error {
+		cfg.API.PairingToken = token
+		return nil
+	}); err != nil {
+		if errors.Is(err, errConfigUnavailable) {
+			writeError(w, http.StatusInternalServerError, "configuration unavailable")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "configuration write failed")
 		return
 	}
@@ -281,6 +302,22 @@ func (s *Server) load(ctx context.Context) (config.Config, error) {
 	var cfg config.Config
 	err := s.config.Load(ctx, &cfg)
 	return cfg, err
+}
+
+func (s *Server) updateStoredConfig(ctx context.Context, update func(*config.Config) error) (config.Config, error) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	cfg, err := s.load(ctx)
+	if err != nil {
+		return config.Config{}, errors.Join(errConfigUnavailable, err)
+	}
+	if err := update(&cfg); err != nil {
+		return config.Config{}, err
+	}
+	if err := s.config.Save(ctx, cfg); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
 }
 
 func publicConfig(cfg config.Config) any {

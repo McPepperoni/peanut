@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"peanut/internal/audio"
 	"peanut/internal/config"
@@ -59,7 +61,7 @@ func TestRuntimeClosesResourcesAfterCoordinatorStops(t *testing.T) {
 						return ctx.Err()
 					},
 					func() error { return test.serveErr },
-					func() {},
+					func() error { return nil },
 				)
 				if closeResourceErr := closeRuntimeResources(capture, player); err == nil {
 					err = closeResourceErr
@@ -94,6 +96,95 @@ func TestRuntimeClosesResourcesAfterCoordinatorStops(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRuntimeWaitsForHTTPServerDrain(t *testing.T) {
+	serverReleased := make(chan struct{})
+	finishDrain := make(chan struct{})
+	result := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		result <- runRuntimeProcesses(
+			ctx,
+			cancel,
+			func(context.Context) error { return nil },
+			func() error {
+				<-serverReleased
+				<-finishDrain
+				return http.ErrServerClosed
+			},
+			func() error {
+				close(serverReleased)
+				return nil
+			},
+		)
+	}()
+	<-serverReleased
+	select {
+	case err := <-result:
+		t.Fatalf("runtime returned before HTTP drain: %v", err)
+	default:
+	}
+	close(finishDrain)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunHTTPServerWaitsForShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	serverReleased := make(chan struct{})
+	finishDrain := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		result <- runHTTPServer(ctx, func() error {
+			<-serverReleased
+			<-finishDrain
+			return http.ErrServerClosed
+		}, func() error {
+			close(serverReleased)
+			return nil
+		})
+	}()
+	cancel()
+	<-serverReleased
+	select {
+	case err := <-result:
+		t.Fatalf("server returned before drain: %v", err)
+	default:
+	}
+	close(finishDrain)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHTTPShutdownForcesCloseAfterDeadline(t *testing.T) {
+	handlerStarted := make(chan struct{})
+	handlerDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(handlerStarted)
+		<-r.Context().Done()
+		close(handlerDone)
+	}))
+	defer server.Close()
+	requestDone := make(chan struct{})
+	go func() {
+		_, _ = server.Client().Get(server.URL)
+		close(requestDone)
+	}()
+	<-handlerStarted
+
+	err := shutdownHTTPServer(server.Config, 10*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown error = %v", err)
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("forced close did not cancel handler")
+	}
+	<-requestDone
 }
 
 type runtimeTestResource struct {
@@ -144,6 +235,52 @@ func TestRuntimeRegistryReloadInvokesLiveSwapBoundary(t *testing.T) {
 	}
 	if swaps != 1 || plan.Language != "intent-live" {
 		t.Fatalf("swaps = %d, delegated language = %q", swaps, plan.Language)
+	}
+}
+
+func TestIntentRuntimeNamesResolveToLlamaCLI(t *testing.T) {
+	for _, runtimeName := range []string{"local", "llama.cpp", "llama-cli"} {
+		name, err := intentExecutableName(runtimeName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "llama-cli" {
+			t.Errorf("runtime %q resolved to %q", runtimeName, name)
+		}
+	}
+	if _, err := intentExecutableName("unsupported"); err == nil {
+		t.Fatal("unsupported intent runtime accepted")
+	}
+}
+
+func TestRuntimeSwapRejectsMissingIntentExecutableBeforePublication(t *testing.T) {
+	root := t.TempDir()
+	active := make(map[models.Role]models.Profile)
+	for _, role := range []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent} {
+		directory := filepath.Join(root, string(role), "local")
+		if err := os.MkdirAll(directory, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "model.bin"), []byte("model"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		active[role] = models.Profile{ID: string(role) + "-local", Role: role, Runtime: "local", Path: filepath.ToSlash(filepath.Join(string(role), "local")), Entry: "model.bin", Valid: true}
+	}
+	missingExecutable := filepath.Join(root, "missing-llama-cli")
+	intentProfile := active[models.RoleIntent]
+	intentProfile.Runtime = missingExecutable
+	active[models.RoleIntent] = intentProfile
+	cfg := config.Config{Models: config.Models{Root: root, Threads: 1, CPUOnly: true}, HomeAssistant: config.HomeAssistant{Timeout: time.Second}}
+	live := newReloadableModels(buildModelSet(cfg))
+	live.current = modelSet{parser: runtimeTestParser{language: "old"}}
+
+	err := live.Swap(context.Background(), models.Snapshot{Active: active})
+	if err == nil || !strings.Contains(err.Error(), "intent runtime") {
+		t.Fatalf("swap error = %v", err)
+	}
+	plan, parseErr := live.Parse(context.Background(), "test", intent.CapabilitySnapshot{})
+	if parseErr != nil || plan.Language != "old" {
+		t.Fatalf("previous parser not preserved: plan = %#v, error = %v", plan, parseErr)
 	}
 }
 

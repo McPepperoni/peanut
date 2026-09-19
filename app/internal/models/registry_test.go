@@ -15,7 +15,10 @@ type fakeModelStore struct {
 	err      error
 }
 
-func (s *fakeModelStore) ReplaceSnapshot(_ context.Context, profiles []Profile) error {
+func (s *fakeModelStore) ReplaceSnapshot(ctx context.Context, profiles []Profile) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s.err != nil {
 		return s.err
 	}
@@ -117,6 +120,29 @@ func TestRegistryKeepsPriorRoleWhenReloadFails(t *testing.T) {
 		t.Fatalf("active intent = %#v", active)
 	}
 	if len(store.profiles) != 1 || store.profiles[0].ID != "intent-local" {
+		t.Fatalf("stored profiles = %#v", store.profiles)
+	}
+}
+
+func TestRegistryRestoresMetadataWhenSwapCancelsRequest(t *testing.T) {
+	root := t.TempDir()
+	writeModelManifest(t, root, "intent/local", `{"id":"intent-old","role":"intent","runtime":"local","entry":"model.gguf"}`)
+	store := &fakeModelStore{}
+	registry := NewRegistry(root, store, nil)
+	if _, err := registry.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	writeModelManifest(t, root, "intent/local", `{"id":"intent-new","role":"intent","runtime":"local","entry":"model.gguf"}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	registry.swap = func(context.Context, Snapshot) error {
+		cancel()
+		return errors.New("load failed")
+	}
+
+	if _, err := registry.Scan(ctx); err == nil {
+		t.Fatal("want swap error")
+	}
+	if len(store.profiles) != 1 || store.profiles[0].ID != "intent-old" {
 		t.Fatalf("stored profiles = %#v", store.profiles)
 	}
 }

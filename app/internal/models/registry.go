@@ -14,7 +14,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
+
+const metadataRollbackTimeout = 5 * time.Second
 
 type Role string
 
@@ -105,7 +108,9 @@ func (r *Registry) Scan(ctx context.Context) (Snapshot, error) {
 	if r.swap != nil {
 		if err := r.swap(ctx, snapshot); err != nil {
 			if r.store != nil {
-				if rollbackErr := r.store.ReplaceSnapshot(ctx, previous); rollbackErr != nil {
+				rollbackCtx, cancel := context.WithTimeout(context.Background(), metadataRollbackTimeout)
+				defer cancel()
+				if rollbackErr := r.store.ReplaceSnapshot(rollbackCtx, previous); rollbackErr != nil {
 					return snapshot, errors.Join(fmt.Errorf("swap model snapshot: %w", err), fmt.Errorf("restore model snapshot: %w", rollbackErr))
 				}
 			}

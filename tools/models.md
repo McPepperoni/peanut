@@ -28,7 +28,7 @@ Manifest fields:
 
 - `id`: stable profile identifier; duplicate IDs are invalid.
 - `role`: one of the six runtime roles and must match the parent directory.
-- `runtime`: adapter/executable name used by the role; non-empty.
+- `runtime`: adapter/executable name used by the role; `local`, `llama.cpp`, and `llama-cli` resolve to `llama-cli` for intent profiles. An explicit executable path is also accepted and validated before a live swap.
 - `entry`: relative regular file used as the profile entry point; it cannot escape the profile directory.
 - `sha256`: optional checksum for `entry`, compared case-insensitively; empty disables the checksum check.
 - `threads`: declared profile thread count; keep it positive and aligned with the SQLite CPU configuration.

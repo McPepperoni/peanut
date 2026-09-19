@@ -9,11 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"peanut/internal/api"
 	"peanut/internal/config"
-	"peanut/internal/models"
 	"peanut/internal/storage/sqlite"
 )
 
@@ -44,7 +44,7 @@ func TestRunMainWithoutArgumentsReturnsUsage(t *testing.T) {
 	}
 }
 
-func TestModelsAPIReloadReachesRuntimeSwapBoundary(t *testing.T) {
+func TestModelsAPIUsesDiscoveryWithoutRuntimeConstruction(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "peanut.db"))
 	if err != nil {
@@ -85,18 +85,33 @@ func TestModelsAPIReloadReachesRuntimeSwapBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	swaps := 0
-	owner := newReloadableModels(func(_ context.Context, snapshot models.Snapshot) (modelSet, error) {
-		swaps++
-		return modelSet{parser: runtimeTestParser{language: snapshot.Active[models.RoleIntent].ID}}, nil
-	})
-	registry := newRuntimeModelRegistry(cfg, db, owner)
+	registry := newAPIModelRegistry(cfg, db)
 	server := api.NewServer(db, nil, registry)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 
-	if response.Code != http.StatusOK || swaps != 1 {
-		t.Fatalf("status = %d, swaps = %d, body = %s", response.Code, swaps, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	stored, err := sqlite.NewModelStore(db).List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].ID != "intent-live" {
+		t.Fatalf("stored models = %#v", stored)
+	}
+}
+
+func TestTerminationSignalsIncludeInterruptAndSIGTERM(t *testing.T) {
+	signals := terminationSignals()
+	for _, want := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+		found := false
+		for _, signal := range signals {
+			found = found || signal == want
+		}
+		if !found {
+			t.Errorf("termination signals %v do not include %v", signals, want)
+		}
 	}
 }

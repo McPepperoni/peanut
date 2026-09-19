@@ -79,6 +79,68 @@ func TestPersistDefaultsDoesNotReplaceStoredConfig(t *testing.T) {
 	}
 }
 
+func TestPersistDefaultsMigratesLegacyModelPaths(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "peanut.db")
+	db := initializeDatabase(t, path)
+	legacy := struct {
+		Audio  Audio
+		Models struct {
+			WakeWordPath string
+			VADPath      string
+			STTPath      string
+			SpeakerPath  string
+			TTSPath      string
+			IntentPath   string
+			LlamaPath    string
+			Threads      int
+			CPUOnly      bool
+		}
+		HomeAssistant HomeAssistant
+		API           API
+	}{
+		Audio:         defaultConfig().Audio,
+		HomeAssistant: defaultConfig().HomeAssistant,
+		API:           defaultConfig().API,
+	}
+	legacy.Audio.InputDevice = "legacy-mic"
+	legacy.HomeAssistant.Token = "ha-secret"
+	legacy.API.PairingToken = "pairing-secret"
+	legacy.Models.WakeWordPath = "local-model/kws"
+	legacy.Models.VADPath = "local-model/vad.onnx"
+	legacy.Models.STTPath = "local-model/stt"
+	legacy.Models.SpeakerPath = "local-model/speaker.onnx"
+	legacy.Models.TTSPath = "local-model/tts"
+	legacy.Models.IntentPath = "local-model/intent.gguf"
+	legacy.Models.LlamaPath = "llama-cli"
+	legacy.Models.Threads = 2
+	legacy.Models.CPUOnly = true
+	stored, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES ('runtime_config', ?)`, stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := PersistDefaults(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Models.Root != "models" || cfg.Models.Threads != 2 || !cfg.Models.CPUOnly {
+		t.Fatalf("model config = %+v", cfg.Models)
+	}
+	if cfg.Audio.InputDevice != "legacy-mic" || cfg.HomeAssistant.Token != "ha-secret" || cfg.API.PairingToken != "pairing-secret" {
+		t.Fatalf("unrelated settings changed: %+v", cfg)
+	}
+}
+
 func TestLoadRejectsInvalidStoredConfig(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "peanut.db")

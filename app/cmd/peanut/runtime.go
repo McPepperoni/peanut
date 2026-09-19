@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"peanut/assets"
 	"peanut/internal/api"
@@ -27,6 +30,8 @@ import (
 	"peanut/internal/providers"
 	"peanut/internal/storage/sqlite"
 )
+
+const gracefulHTTPShutdownTimeout = 5 * time.Second
 
 type modelSet struct {
 	wake        kws.WakeDetector
@@ -154,11 +159,11 @@ func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err e
 		cancel,
 		runtime.coordinator.Run,
 		httpServer.ListenAndServe,
-		func() { _ = httpServer.Shutdown(context.Background()) },
+		func() error { return shutdownHTTPServer(httpServer, gracefulHTTPShutdownTimeout) },
 	)
 }
 
-func runRuntimeProcesses(ctx context.Context, cancel context.CancelFunc, runCoordinator func(context.Context) error, serve func() error, shutdownServer func()) error {
+func runRuntimeProcesses(ctx context.Context, cancel context.CancelFunc, runCoordinator func(context.Context) error, serve func() error, shutdownServer func() error) error {
 	coordinatorDone := make(chan error, 1)
 	serverDone := make(chan error, 1)
 	go func() { coordinatorDone <- runCoordinator(ctx) }()
@@ -166,22 +171,61 @@ func runRuntimeProcesses(ctx context.Context, cancel context.CancelFunc, runCoor
 
 	var runErr error
 	coordinatorStopped := false
+	serverStopped := false
 	select {
 	case runErr = <-coordinatorDone:
 		coordinatorStopped = true
 	case runErr = <-serverDone:
+		serverStopped = true
 	case <-ctx.Done():
 		runErr = ctx.Err()
 	}
 	cancel()
-	shutdownServer()
+	shutdownErr := shutdownServer()
+	var coordinatorErr, serverErr error
 	if !coordinatorStopped {
-		<-coordinatorDone
+		coordinatorErr = <-coordinatorDone
 	}
-	if errors.Is(runErr, http.ErrServerClosed) {
+	if !serverStopped {
+		serverErr = <-serverDone
+	}
+	for _, err := range []error{runErr, coordinatorErr, serverErr} {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	}
+	return shutdownErr
+}
+
+func runHTTPServer(ctx context.Context, serve func() error, shutdown func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- serve() }()
+	select {
+	case err := <-done:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownErr := shutdown()
+		serveErr := <-done
+		if shutdownErr != nil {
+			return shutdownErr
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			return serveErr
+		}
 		return nil
 	}
-	return runErr
+}
+
+func shutdownHTTPServer(server *http.Server, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		return errors.Join(err, server.Close())
+	}
+	return nil
 }
 
 func closeRuntimeResources(capture audio.Capture, player audio.Player) error {
@@ -284,6 +328,11 @@ func buildModelSet(cfg config.Config) modelSetBuilder {
 			Provider: ml.CPUProvider,
 			Threads:  cfg.Models.Threads,
 		}
+		intentProfile := required[models.RoleIntent]
+		intentExecutable, err := resolveIntentExecutable(intentProfile.Runtime)
+		if err != nil {
+			return modelSet{}, err
+		}
 		wake, err := sherpa.NewWakeDetector(manifest)
 		if err != nil {
 			return modelSet{}, fmt.Errorf("create wake detector: %w", err)
@@ -300,15 +349,38 @@ func buildModelSet(cfg config.Config) modelSetBuilder {
 		if err != nil {
 			return modelSet{}, fmt.Errorf("create synthesizer: %w", err)
 		}
-		intentProfile := required[models.RoleIntent]
 		return modelSet{
 			wake:        wake,
 			voice:       voice,
 			transcriber: transcriber,
-			parser:      intent.NewModelParser(intentProfile.Runtime, modelEntry(cfg.Models.Root, intentProfile), cfg.Models.Threads, cfg.HomeAssistant.Timeout),
+			parser:      intent.NewModelParser(intentExecutable, modelEntry(cfg.Models.Root, intentProfile), cfg.Models.Threads, cfg.HomeAssistant.Timeout),
 			synthesizer: synthesizer,
 		}, nil
 	}
+}
+
+func intentExecutableName(runtimeName string) (string, error) {
+	switch runtimeName {
+	case "local", "llama.cpp", "llama-cli":
+		return "llama-cli", nil
+	default:
+		if filepath.IsAbs(runtimeName) || strings.ContainsAny(runtimeName, `/\\`) {
+			return runtimeName, nil
+		}
+		return "", fmt.Errorf("unsupported intent runtime %q", runtimeName)
+	}
+}
+
+func resolveIntentExecutable(runtimeName string) (string, error) {
+	executable, err := intentExecutableName(runtimeName)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := exec.LookPath(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve intent runtime %q: %w", runtimeName, err)
+	}
+	return resolved, nil
 }
 
 func requiredProfiles(root string, snapshot models.Snapshot) (map[models.Role]models.Profile, error) {

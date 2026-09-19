@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"peanut/internal/config"
 	"peanut/internal/intent"
@@ -213,6 +214,54 @@ func TestServerGeneratesAndStoresPairingToken(t *testing.T) {
 	}
 }
 
+func TestServerSerializesConfigReadModifyWrite(t *testing.T) {
+	db := apiDB(t)
+	server := NewServer(db, nil, nil)
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := server.updateStoredConfig(context.Background(), func(cfg *config.Config) error {
+			close(firstEntered)
+			<-releaseFirst
+			cfg.HomeAssistant.URL = "http://ha.example:8123"
+			return nil
+		})
+		firstDone <- err
+	}()
+	<-firstEntered
+
+	secondEntered := make(chan struct{})
+	secondStarted := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		close(secondStarted)
+		_, err := server.updateStoredConfig(context.Background(), func(cfg *config.Config) error {
+			close(secondEntered)
+			cfg.API.PairingToken = "rotated-token"
+			return nil
+		})
+		secondDone <- err
+	}()
+	<-secondStarted
+	select {
+	case <-secondEntered:
+		t.Fatal("second config mutation entered before first completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadConfig(t, sqlite.NewConfigStore(db))
+	if cfg.HomeAssistant.URL != "http://ha.example:8123" || cfg.API.PairingToken != "rotated-token" {
+		t.Fatalf("stored config = %+v", cfg)
+	}
+}
+
 func TestServerConfigWriteIsValidatedAtomicAndRediscovered(t *testing.T) {
 	db := apiDB(t)
 	refresher := &fakeRefresher{}
@@ -392,10 +441,56 @@ func TestDocsEndpointsAreEmbeddedAndLocal(t *testing.T) {
 	if strings.Contains(html, `src="http://`) || strings.Contains(html, `src="https://`) {
 		t.Fatalf("docs use remote script source: %s", html)
 	}
+	if !strings.Contains(html, `"withDefaultFonts":false`) {
+		t.Fatalf("docs allow Scalar remote fonts: %s", html)
+	}
 
 	script := request(t, handler, http.MethodGet, "/scalar.js", "", "")
 	if script.Code != http.StatusOK || script.Body.Len() == 0 {
 		t.Fatalf("scalar script status = %d, size = %d", script.Code, script.Body.Len())
+	}
+}
+
+func TestLANDocsRemainPublicWhileRuntimeRoutesRequireAuthentication(t *testing.T) {
+	db := apiDB(t)
+	store := sqlite.NewConfigStore(db)
+	cfg := loadConfig(t, store)
+	cfg.API.Address = "0.0.0.0:8080"
+	cfg.API.AllowLAN = true
+	cfg.API.PairingToken = "pairing-secret"
+	if err := store.Save(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(db, nil, nil).Handler()
+	for _, path := range []string{"/docs", "/scalar.js", "/api/v1/openapi.json"} {
+		if response := request(t, handler, http.MethodGet, path, "", ""); response.Code != http.StatusOK {
+			t.Errorf("%s status = %d, body = %s", path, response.Code, response.Body.String())
+		}
+	}
+	if response := request(t, handler, http.MethodGet, "/api/v1/config", "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("protected route status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestOpenAPIDeclaresBearerSecurityExceptPublicDocs(t *testing.T) {
+	db := apiDB(t)
+	response := request(t, NewServer(db, nil, nil).Handler(), http.MethodGet, "/api/v1/openapi.json", "", "")
+	var document struct {
+		Security []map[string][]string `json:"security"`
+		Paths    map[string]map[string]struct {
+			Security []map[string][]string `json:"security"`
+		} `json:"paths"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Security) != 1 {
+		t.Fatalf("global security = %#v", document.Security)
+	}
+	for _, path := range []string{"/docs", "/api/v1/openapi.json"} {
+		if security := document.Paths[path]["get"].Security; security == nil || len(security) != 0 {
+			t.Errorf("%s security = %#v", path, security)
+		}
 	}
 }
 

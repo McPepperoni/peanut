@@ -25,7 +25,7 @@ go build -o ../build/peanut ./cmd/peanut
 ```
 
 The command writes `build/peanut`. On Windows, use `-o ../build/peanut.exe` when an `.exe` suffix is required.
-These pure checks do not need model bytes, CUDA, CGO, cloud services, or Home Assistant.
+Tests and vet exercise the SQLite CGO driver, so they require CGO plus a C compiler. They do not need model bytes, CUDA, cloud services, or Home Assistant. The Linux ARM64 CI job is compile-only with `CGO_ENABLED=0`; it does not run database-backed tests or produce the native SQLite runtime used in production.
 
 ## Build
 

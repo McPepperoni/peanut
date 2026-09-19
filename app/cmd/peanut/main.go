@@ -2,22 +2,30 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"peanut/internal/api"
 	"peanut/internal/config"
+	"peanut/internal/models"
 	"peanut/internal/providers"
 	"peanut/internal/storage/sqlite"
 )
 
 func main() {
-	if err := runMain(context.Background(), os.Args, config.DefaultDatabasePath, commandDependencies{}, os.Stdout); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), terminationSignals()...)
+	defer stop()
+	if err := runMain(ctx, os.Args, config.DefaultDatabasePath, commandDependencies{}, os.Stdout); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func terminationSignals() []os.Signal {
+	return []os.Signal{os.Interrupt, syscall.SIGTERM}
 }
 
 func runMain(ctx context.Context, args []string, databasePath string, dependencies commandDependencies, output io.Writer) error {
@@ -60,8 +68,7 @@ func serveAPI(ctx context.Context, db *sqlite.DB) error {
 	if err := sqlite.NewConfigStore(db).Load(ctx, &cfg); err != nil {
 		return err
 	}
-	modelOwner := newReloadableModels(buildModelSet(cfg))
-	modelRegistry := newRuntimeModelRegistry(cfg, db, modelOwner)
+	modelRegistry := newAPIModelRegistry(cfg, db)
 	server := api.NewServer(db, provider, modelRegistry)
 	address, err := server.Address(ctx)
 	if err != nil {
@@ -69,12 +76,11 @@ func serveAPI(ctx context.Context, db *sqlite.DB) error {
 	}
 	server.SetBoundAddress(address)
 	httpServer := &http.Server{Addr: address, Handler: server.Handler()}
-	go func() {
-		<-ctx.Done()
-		_ = httpServer.Shutdown(context.Background())
-	}()
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	return runHTTPServer(ctx, httpServer.ListenAndServe, func() error {
+		return shutdownHTTPServer(httpServer, gracefulHTTPShutdownTimeout)
+	})
+}
+
+func newAPIModelRegistry(cfg config.Config, db *sqlite.DB) *models.Registry {
+	return models.NewRegistry(cfg.Models.Root, sqlite.NewModelStore(db), nil)
 }

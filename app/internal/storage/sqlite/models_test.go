@@ -114,6 +114,36 @@ func TestFreshRegistryRejectsPersistedActiveRoleOnInvalidReload(t *testing.T) {
 	}
 }
 
+func TestRegistryPersistsUnsafeInvalidEntryAsDiagnostic(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "peanut.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeManifest(t, root, `{"id":"intent-bad","role":"intent","runtime":"local","entry":"../../secret.gguf"}`)
+	store := NewModelStore(db)
+
+	snapshot, err := models.NewRegistry(root, store, nil).Scan(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Profiles) != 1 || snapshot.Profiles[0].Valid || snapshot.Profiles[0].Error == "" {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	stored, err := store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].Entry != "" || stored[0].Error == "" {
+		t.Fatalf("stored profiles = %#v", stored)
+	}
+}
+
 func writeManifest(t *testing.T, root, manifest string) {
 	t.Helper()
 	directory := filepath.Join(root, "intent", "local")

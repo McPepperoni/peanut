@@ -88,6 +88,41 @@ func PersistDefaults(ctx context.Context, db *sqlite.DB) error {
 	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO settings (key, value) VALUES ('runtime_config', ?)`, stored); err != nil {
 		return fmt.Errorf("persist default config: %w", err)
 	}
+	if err := db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'runtime_config'`).Scan(&stored); err != nil {
+		return fmt.Errorf("load stored config for migration: %w", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(stored, &cfg); err != nil {
+		return fmt.Errorf("decode stored config for migration: %w", err)
+	}
+	if cfg.Models.Root != "" {
+		return nil
+	}
+	var legacy struct {
+		Models struct {
+			WakeWordPath string
+			VADPath      string
+			STTPath      string
+			SpeakerPath  string
+			TTSPath      string
+			IntentPath   string
+			LlamaPath    string
+		}
+	}
+	if err := json.Unmarshal(stored, &legacy); err != nil {
+		return fmt.Errorf("decode legacy config: %w", err)
+	}
+	if legacy.Models.WakeWordPath == "" && legacy.Models.VADPath == "" && legacy.Models.STTPath == "" && legacy.Models.SpeakerPath == "" && legacy.Models.TTSPath == "" && legacy.Models.IntentPath == "" && legacy.Models.LlamaPath == "" {
+		return nil
+	}
+	cfg.Models.Root = defaultConfig().Models.Root
+	stored, err = json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("encode migrated config: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key = 'runtime_config'`, stored); err != nil {
+		return fmt.Errorf("persist migrated config: %w", err)
+	}
 	return nil
 }
 

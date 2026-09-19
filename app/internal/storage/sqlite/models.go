@@ -18,12 +18,17 @@ func (s *ModelStore) ReplaceSnapshot(ctx context.Context, profiles []models.Prof
 	if s == nil || s.db == nil {
 		return errors.New("model store is required")
 	}
-	for _, profile := range profiles {
+	profiles = append([]models.Profile(nil), profiles...)
+	for index := range profiles {
+		profile := &profiles[index]
 		if profile.Path == "" || unsafeRelativePath(profile.Path) {
 			return fmt.Errorf("model %q path must be relative", profile.ID)
 		}
 		if unsafeRelativePath(profile.Entry) {
-			return fmt.Errorf("model %q entry must be relative without traversal", profile.ID)
+			if profile.Valid {
+				return fmt.Errorf("model %q entry must be relative without traversal", profile.ID)
+			}
+			profile.Entry = ""
 		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
