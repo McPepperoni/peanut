@@ -22,12 +22,14 @@ import (
 	"peanut/internal/ml"
 	"peanut/internal/ml/kws"
 	"peanut/internal/ml/sherpa"
+	mlspeaker "peanut/internal/ml/speaker"
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
 	"peanut/internal/ml/vad"
 	"peanut/internal/models"
 	"peanut/internal/pipeline"
 	"peanut/internal/providers"
+	speakerstore "peanut/internal/speaker"
 	"peanut/internal/storage/sqlite"
 )
 
@@ -37,6 +39,7 @@ type modelSet struct {
 	wake        kws.WakeDetector
 	voice       vad.VAD
 	transcriber stt.Transcriber
+	speaker     mlspeaker.SpeakerIdentifier
 	parser      intent.IntentParser
 	synthesizer tts.Synthesizer
 }
@@ -59,9 +62,31 @@ func (r *reloadableModels) Swap(ctx context.Context, snapshot models.Snapshot) e
 		return err
 	}
 	r.mu.Lock()
+	previous := r.current
 	r.current = next
 	r.mu.Unlock()
+	_ = closeModelSet(previous)
 	return nil
+}
+
+func (r *reloadableModels) Close() error {
+	r.mu.Lock()
+	previous := r.current
+	r.current = modelSet{}
+	r.mu.Unlock()
+	return closeModelSet(previous)
+}
+
+func closeModelSet(set modelSet) error {
+	var errs []error
+	for _, resource := range []any{set.wake, set.voice, set.transcriber, set.speaker, set.parser, set.synthesizer} {
+		if closer, ok := resource.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (r *reloadableModels) DetectVoice(ctx context.Context, frame audio.Frame) (vad.Result, error) {
@@ -80,6 +105,25 @@ func (r *reloadableModels) Transcribe(ctx context.Context, input audio.Audio) (s
 		return stt.Result{}, fmt.Errorf("runtime STT model unavailable")
 	}
 	return r.current.transcriber.Transcribe(ctx, input)
+}
+
+func (r *reloadableModels) Identify(ctx context.Context, input audio.Audio) mlspeaker.Result {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.current.speaker == nil {
+		return mlspeaker.Result{Err: fmt.Errorf("runtime speaker model unavailable")}
+	}
+	return r.current.speaker.Identify(ctx, input)
+}
+
+func (r *reloadableModels) Embed(ctx context.Context, input audio.Audio) ([]float32, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	embedder, ok := r.current.speaker.(speakerstore.Embedder)
+	if !ok {
+		return nil, fmt.Errorf("runtime speaker embedder unavailable")
+	}
+	return embedder.Embed(ctx, input)
 }
 
 func (r *reloadableModels) Parse(ctx context.Context, transcript string, snapshot intent.CapabilitySnapshot) (intent.ActionPlan, error) {
@@ -135,6 +179,27 @@ func (v reloadableVAD) Reset() error {
 	return v.models.current.voice.Reset()
 }
 
+type runtimeSpeaker struct {
+	models *reloadableModels
+	store  *speakerstore.Store
+}
+
+func (s runtimeSpeaker) Embed(ctx context.Context, input audio.Audio) ([]float32, error) {
+	return s.models.Embed(ctx, input)
+}
+
+func (s runtimeSpeaker) Identify(ctx context.Context, input audio.Audio) mlspeaker.Result {
+	embedding, err := s.models.Embed(ctx, input)
+	if err != nil {
+		return mlspeaker.Result{Err: err}
+	}
+	if s.store == nil {
+		return mlspeaker.Result{Err: fmt.Errorf("speaker store unavailable")}
+	}
+	id, score, err := s.store.Match(ctx, embedding, 0.75)
+	return mlspeaker.Result{ID: id, Score: score, Err: err}
+}
+
 func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -143,7 +208,8 @@ func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err e
 		return err
 	}
 	defer func() {
-		if closeErr := closeRuntimeResources(runtime.capture, runtime.player); err == nil {
+		closeErr := errors.Join(closeRuntimeResources(runtime.capture, runtime.player), runtime.modelSet.Close())
+		if closeErr != nil && err == nil {
 			err = closeErr
 		}
 	}()
@@ -252,12 +318,20 @@ type configuredRuntime struct {
 	coordinator   *pipeline.Coordinator
 	homeAssistant *providers.HomeAssistantProvider
 	modelRegistry *models.Registry
+	modelSet      *reloadableModels
+	speakerStore  *speakerstore.Store
 	capture       audio.Capture
 	player        audio.Player
 }
 
 func newConfiguredRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB) (*configuredRuntime, error) {
 	liveModels := newReloadableModels(buildModelSet(cfg))
+	ready := false
+	defer func() {
+		if !ready {
+			_ = liveModels.Close()
+		}
+	}()
 	modelRegistry := newRuntimeModelRegistry(cfg, db, liveModels)
 	if _, err := modelRegistry.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("scan model roles at %s: %w", cfg.Models.Root, err)
@@ -283,8 +357,11 @@ func newConfiguredRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB)
 	pcfg.PlaybackTail = cfg.Audio.PlaybackTail
 	pcfg.NoSpeechTimeout = cfg.Audio.NoSpeechTimeout
 	pcfg.MaximumCommandDuration = cfg.Audio.MaximumCommandDuration
-	systemCapture := capture.SystemCapture{}
-	systemPlayer := playback.SystemPlayer{}
+	pcfg.DebugAudio = cfg.Audio.DebugAudio
+	pcfg.DebugAudioPath = cfg.Audio.DebugAudioPath
+	systemCapture := capture.SystemCapture{Device: cfg.Audio.InputDevice}
+	systemPlayer := playback.SystemPlayer{Device: cfg.Audio.OutputDevice}
+	speakerStore := speakerstore.NewSpeakerStore(db)
 	coordinator, err := pipeline.NewCoordinator(pcfg, pipeline.Dependencies{
 		Capture:         systemCapture,
 		Player:          systemPlayer,
@@ -294,13 +371,63 @@ func newConfiguredRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB)
 		Transcriber:     liveModels,
 		IntentParser:    liveModels,
 		Synthesizer:     liveModels,
+		Speaker:         runtimeSpeaker{models: liveModels, store: speakerStore},
 		Registry:        providerRegistry,
 		Capabilities:    capabilities,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &configuredRuntime{coordinator: coordinator, homeAssistant: homeAssistant, modelRegistry: modelRegistry, capture: systemCapture, player: systemPlayer}, nil
+	ready = true
+	return &configuredRuntime{coordinator: coordinator, homeAssistant: homeAssistant, modelRegistry: modelRegistry, modelSet: liveModels, speakerStore: speakerStore, capture: systemCapture, player: systemPlayer}, nil
+}
+
+func newCommandRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB, command string) (*configuredRuntime, error) {
+	var roles []models.Role
+	switch command {
+	case "speak":
+		roles = []models.Role{models.RoleTTS}
+	case "transcribe":
+		roles = []models.Role{models.RoleSTT}
+	case "enroll":
+		roles = []models.Role{models.RoleSpeaker}
+	default:
+		return nil, fmt.Errorf("unsupported command runtime %q", command)
+	}
+	build := func(buildCtx context.Context, snapshot models.Snapshot) (modelSet, error) {
+		selected := append([]models.Role(nil), roles...)
+		if command == "transcribe" {
+			if _, ok := snapshot.Active[models.RoleSpeaker]; ok {
+				selected = append(selected, models.RoleSpeaker)
+			}
+		}
+		set, err := buildModelSet(cfg, selected...)(buildCtx, snapshot)
+		if err != nil && command == "transcribe" && len(selected) > len(roles) {
+			return buildModelSet(cfg, roles...)(buildCtx, snapshot)
+		}
+		return set, err
+	}
+	liveModels := newReloadableModels(build)
+	ready := false
+	defer func() {
+		if !ready {
+			_ = liveModels.Close()
+		}
+	}()
+	modelRegistry := newRuntimeModelRegistry(cfg, db, liveModels)
+	if _, err := modelRegistry.Reload(ctx); err != nil {
+		return nil, fmt.Errorf("scan model roles at %s: %w", cfg.Models.Root, err)
+	}
+	systemCapture := capture.SystemCapture{Device: cfg.Audio.InputDevice}
+	systemPlayer := playback.SystemPlayer{Device: cfg.Audio.OutputDevice}
+	ready = true
+	return &configuredRuntime{
+		modelRegistry: modelRegistry,
+		modelSet:      liveModels,
+		speakerStore:  speakerstore.NewSpeakerStore(db),
+		capture:       systemCapture,
+		player:        systemPlayer,
+	}, nil
 }
 
 func newRuntimeModelRegistry(cfg config.Config, db *sqlite.DB, owner *reloadableModels) *models.Registry {
@@ -311,51 +438,77 @@ func newRuntimeModelRegistry(cfg config.Config, db *sqlite.DB, owner *reloadable
 	return models.NewRegistry(cfg.Models.Root, modelStore, owner.Swap)
 }
 
-func buildModelSet(cfg config.Config) modelSetBuilder {
+func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
 	return func(_ context.Context, snapshot models.Snapshot) (modelSet, error) {
-		required, err := requiredProfiles(cfg.Models.Root, snapshot)
+		required, err := requiredProfiles(cfg.Models.Root, snapshot, roles...)
 		if err != nil {
 			return modelSet{}, err
 		}
 		manifest := ml.Manifest{
-			Paths: ml.Paths{
-				KWS:     modelDirectory(cfg.Models.Root, required[models.RoleKWS]),
-				VAD:     modelEntry(cfg.Models.Root, required[models.RoleVAD]),
-				STT:     modelDirectory(cfg.Models.Root, required[models.RoleSTT]),
-				Speaker: modelEntry(cfg.Models.Root, required[models.RoleSpeaker]),
-				TTS:     modelDirectory(cfg.Models.Root, required[models.RoleTTS]),
-			},
 			Provider: ml.CPUProvider,
 			Threads:  cfg.Models.Threads,
 		}
-		intentProfile := required[models.RoleIntent]
-		intentExecutable, err := resolveIntentExecutable(intentProfile.Runtime)
-		if err != nil {
-			return modelSet{}, err
+		if profile, ok := required[models.RoleKWS]; ok {
+			manifest.Paths.KWS = modelDirectory(cfg.Models.Root, profile)
 		}
-		wake, err := sherpa.NewWakeDetector(manifest)
-		if err != nil {
-			return modelSet{}, fmt.Errorf("create wake detector: %w", err)
+		if profile, ok := required[models.RoleVAD]; ok {
+			manifest.Paths.VAD = modelEntry(cfg.Models.Root, profile)
 		}
-		voice, err := sherpa.NewVAD(manifest)
-		if err != nil {
-			return modelSet{}, fmt.Errorf("create VAD: %w", err)
+		if profile, ok := required[models.RoleSTT]; ok {
+			manifest.Paths.STT = modelDirectory(cfg.Models.Root, profile)
 		}
-		transcriber, err := sherpa.NewTranscriber(manifest)
-		if err != nil {
-			return modelSet{}, fmt.Errorf("create transcriber: %w", err)
+		if profile, ok := required[models.RoleSpeaker]; ok {
+			manifest.Paths.Speaker = modelEntry(cfg.Models.Root, profile)
 		}
-		synthesizer, err := sherpa.NewSynthesizer(manifest)
-		if err != nil {
-			return modelSet{}, fmt.Errorf("create synthesizer: %w", err)
+		if profile, ok := required[models.RoleTTS]; ok {
+			manifest.Paths.TTS = modelDirectory(cfg.Models.Root, profile)
 		}
-		return modelSet{
-			wake:        wake,
-			voice:       voice,
-			transcriber: transcriber,
-			parser:      intent.NewModelParser(intentExecutable, modelEntry(cfg.Models.Root, intentProfile), cfg.Models.Threads, cfg.HomeAssistant.Timeout),
-			synthesizer: synthesizer,
-		}, nil
+		var intentExecutable string
+		if intentProfile, ok := required[models.RoleIntent]; ok {
+			intentExecutable, err = resolveIntentExecutable(intentProfile.Runtime)
+			if err != nil {
+				return modelSet{}, err
+			}
+		}
+		var set modelSet
+		if _, ok := required[models.RoleKWS]; ok {
+			set.wake, err = sherpa.NewWakeDetector(manifest)
+			if err != nil {
+				return modelSet{}, fmt.Errorf("create wake detector: %w", err)
+			}
+		}
+		if _, ok := required[models.RoleVAD]; ok {
+			set.voice, err = sherpa.NewVAD(manifest, sherpa.WithVADThreshold(cfg.Audio.VADThreshold))
+			if err != nil {
+				_ = closeModelSet(set)
+				return modelSet{}, fmt.Errorf("create VAD: %w", err)
+			}
+		}
+		if _, ok := required[models.RoleSTT]; ok {
+			set.transcriber, err = sherpa.NewTranscriber(manifest)
+			if err != nil {
+				_ = closeModelSet(set)
+				return modelSet{}, fmt.Errorf("create transcriber: %w", err)
+			}
+		}
+		if _, ok := required[models.RoleSpeaker]; ok {
+			set.speaker, err = sherpa.NewSpeakerIdentifier(manifest)
+			if err != nil {
+				_ = closeModelSet(set)
+				return modelSet{}, fmt.Errorf("create speaker identifier: %w", err)
+			}
+		}
+		if _, ok := required[models.RoleTTS]; ok {
+			set.synthesizer, err = sherpa.NewSynthesizer(manifest)
+			if err != nil {
+				_ = closeModelSet(set)
+				return modelSet{}, fmt.Errorf("create synthesizer: %w", err)
+			}
+		}
+		if intentProfile, ok := required[models.RoleIntent]; ok {
+			set.parser = intent.NewModelParser(intentExecutable, modelEntry(cfg.Models.Root, intentProfile), cfg.Models.Threads, cfg.HomeAssistant.Timeout)
+		}
+		return set, nil
 	}
 }
 
@@ -383,9 +536,12 @@ func resolveIntentExecutable(runtimeName string) (string, error) {
 	return resolved, nil
 }
 
-func requiredProfiles(root string, snapshot models.Snapshot) (map[models.Role]models.Profile, error) {
-	required := make(map[models.Role]models.Profile, 6)
-	for _, role := range []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent} {
+func requiredProfiles(root string, snapshot models.Snapshot, roles ...models.Role) (map[models.Role]models.Profile, error) {
+	if len(roles) == 0 {
+		roles = []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent}
+	}
+	required := make(map[models.Role]models.Profile, len(roles))
+	for _, role := range roles {
 		profile, ok := snapshot.Active[role]
 		if !ok {
 			path, detail := filepath.Join(root, string(role)), "missing"
@@ -416,4 +572,54 @@ func max(left, right int) int {
 		return left
 	}
 	return right
+}
+
+func (r *configuredRuntime) commandDependencies(ctx context.Context) commandDependencies {
+	modelSpeaker := runtimeSpeaker{models: r.modelSet, store: r.speakerStore}
+	return commandDependencies{
+		Player:      r.player,
+		Synthesizer: r.modelSet,
+		Transcriber: r.modelSet,
+		Speaker:     modelSpeaker,
+		Enroll: func(enrollCtx context.Context, id string) error {
+			return enrollFromCapture(enrollCtx, id, r.capture, r.speakerStore, modelSpeaker)
+		},
+	}
+}
+
+func enrollFromCapture(ctx context.Context, id string, capture audio.Capture, store *speakerstore.Store, embedder speakerstore.Embedder) error {
+	if capture == nil || store == nil || embedder == nil {
+		return errors.New("speaker enrollment dependencies are incomplete")
+	}
+	captureCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	frames, err := capture.Capture(captureCtx)
+	if err != nil {
+		return err
+	}
+	const samplesPerUtterance = audio.SampleRate
+	samples := make([]audio.Audio, 0, 3)
+	buffer := make([]float32, 0, samplesPerUtterance)
+	for len(samples) < 3 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case frame, ok := <-frames:
+			if !ok {
+				return errors.New("capture ended before enrollment completed")
+			}
+			buffer = append(buffer, frame.Samples...)
+			if len(buffer) < samplesPerUtterance {
+				continue
+			}
+			input, err := audio.NewAudio(audio.SampleRate, audio.Channels, append([]float32(nil), buffer[:samplesPerUtterance]...))
+			if err != nil {
+				return err
+			}
+			samples = append(samples, input)
+			buffer = buffer[samplesPerUtterance:]
+		}
+	}
+	cancel()
+	return store.Enroll(ctx, id, samples, embedder)
 }

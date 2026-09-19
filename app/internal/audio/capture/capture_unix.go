@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package capture
 
@@ -10,7 +10,7 @@ import (
 	"peanut/internal/audio"
 )
 
-type SystemCapture struct{}
+type SystemCapture struct{ Device string }
 
 func (SystemCapture) Capture(context.Context) (<-chan audio.Frame, error) {
 	return nil, fmt.Errorf("%w on %s", ErrUnsupported, runtime.GOOS)

@@ -34,44 +34,59 @@ type Manifest struct {
 }
 
 func (m Manifest) Validate() error {
+	for _, role := range []string{"kws", "vad", "stt", "speaker", "tts"} {
+		if err := m.ValidateRole(role); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m Manifest) ValidateRole(role string) error {
 	if m.Provider != CPUProvider {
 		return fmt.Errorf("%w: provider must be %q", ErrModelInvalid, CPUProvider)
 	}
 	if m.Threads <= 0 {
 		return fmt.Errorf("%w: threads must be positive", ErrModelInvalid)
 	}
-	for _, model := range []struct {
-		name, path string
-		dir        bool
-	}{
-		{"KWS", m.Paths.KWS, true},
-		{"VAD", m.Paths.VAD, false},
-		{"STT", m.Paths.STT, true},
-		{"speaker", m.Paths.Speaker, false},
-		{"TTS", m.Paths.TTS, true},
-	} {
-		if err := validatePath(model.name, model.path, model.dir); err != nil {
+	switch role {
+	case "kws":
+		if err := validatePath("KWS", m.Paths.KWS, true); err != nil {
 			return err
 		}
-	}
-	for _, model := range []struct {
-		name, path string
-	}{
-		{"KWS encoder", filepath.Join(m.Paths.KWS, "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx")},
-		{"KWS decoder", filepath.Join(m.Paths.KWS, "decoder-epoch-12-avg-2-chunk-16-left-64.onnx")},
-		{"KWS joiner", filepath.Join(m.Paths.KWS, "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx")},
-		{"KWS tokens", filepath.Join(m.Paths.KWS, "tokens.txt")},
-		{"STT model", filepath.Join(m.Paths.STT, "model.int8.onnx")},
-		{"STT tokens", filepath.Join(m.Paths.STT, "tokens.txt")},
-		{"TTS model", filepath.Join(m.Paths.TTS, "en_GB-cori-medium.onnx")},
-		{"TTS tokens", filepath.Join(m.Paths.TTS, "tokens.txt")},
-	} {
-		if err := validateRequiredFile(model.name, model.path); err != nil {
+		for _, file := range []string{"encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx", "decoder-epoch-12-avg-2-chunk-16-left-64.onnx", "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx", "tokens.txt", "keywords.txt"} {
+			if err := validateRequiredFile("KWS "+file, filepath.Join(m.Paths.KWS, file)); err != nil {
+				return err
+			}
+		}
+	case "vad":
+		return validatePath("VAD", m.Paths.VAD, false)
+	case "stt":
+		if err := validatePath("STT", m.Paths.STT, true); err != nil {
 			return err
 		}
-	}
-	if info, err := os.Stat(filepath.Join(m.Paths.TTS, "espeak-ng-data")); err != nil || !info.IsDir() {
-		return fmt.Errorf("%w: TTS espeak-ng-data directory", ErrModelInvalid)
+		for _, file := range []string{"model.int8.onnx", "tokens.txt"} {
+			if err := validateRequiredFile("STT "+file, filepath.Join(m.Paths.STT, file)); err != nil {
+				return err
+			}
+		}
+	case "speaker":
+		return validatePath("speaker", m.Paths.Speaker, false)
+	case "tts":
+		if err := validatePath("TTS", m.Paths.TTS, true); err != nil {
+			return err
+		}
+		for _, file := range []string{"en_GB-cori-medium.onnx", "tokens.txt"} {
+			if err := validateRequiredFile("TTS "+file, filepath.Join(m.Paths.TTS, file)); err != nil {
+				return err
+			}
+		}
+		info, err := os.Stat(filepath.Join(m.Paths.TTS, "espeak-ng-data"))
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("%w: TTS espeak-ng-data directory", ErrModelInvalid)
+		}
+	default:
+		return fmt.Errorf("%w: unknown role %q", ErrModelInvalid, role)
 	}
 	return nil
 }

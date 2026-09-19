@@ -2,16 +2,50 @@ package pipeline
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"peanut/internal/audio"
 	"peanut/internal/intent"
 	"peanut/internal/ml/kws"
+	mlspeaker "peanut/internal/ml/speaker"
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
 	"peanut/internal/ml/vad"
 	"peanut/internal/providers"
 )
+
+func TestWriteDebugAudioWritesValidWAV(t *testing.T) {
+	input, err := audio.NewAudio(audio.SampleRate, audio.Channels, []float32{0.25})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := writeDebugAudio(root, input); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("debug files = %d, want 1", len(entries))
+	}
+	file, err := os.Open(filepath.Join(root, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	decoded, err := audio.ReadWAV(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Samples) != 1 || decoded.Samples[0] != input.Samples[0] {
+		t.Fatalf("decoded debug audio = %#v", decoded.Samples)
+	}
+}
 
 func TestCoordinatorRunsSeparateUtteranceHappyPath(t *testing.T) {
 	frame := func(sample float32) audio.Frame {
@@ -34,6 +68,8 @@ func TestCoordinatorRunsSeparateUtteranceHappyPath(t *testing.T) {
 	}
 	player := &coordinatorPlayer{}
 	transcriber := &coordinatorTranscriber{}
+	speaker := &blockingCoordinatorSpeaker{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(speaker.release)
 	cfg := DefaultConfig()
 	cfg.PreRollFrames = 2
 	cfg.PreRollSamples = 2 * audio.FrameSamples
@@ -44,6 +80,7 @@ func TestCoordinatorRunsSeparateUtteranceHappyPath(t *testing.T) {
 		WakeDetector:    &coordinatorWake{},
 		VAD:             &coordinatorVAD{},
 		Transcriber:     transcriber,
+		Speaker:         speaker,
 		IntentParser: coordinatorParser{plan: intent.ActionPlan{
 			Version: 1, Status: intent.StatusExecute, Language: "en", Confidence: 1,
 			Steps: []intent.ActionRequest{{DeviceID: "device.test", ActionID: "power.set", Arguments: map[string]any{"on": true}}},
@@ -61,6 +98,11 @@ func TestCoordinatorRunsSeparateUtteranceHappyPath(t *testing.T) {
 
 	if err := coordinator.Run(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-speaker.started:
+	case <-time.After(time.Second):
+		t.Fatal("speaker identification did not start")
 	}
 
 	if coordinator.State() != WaitingWake {
@@ -126,6 +168,17 @@ type coordinatorTranscriber struct{ input audio.Audio }
 func (f *coordinatorTranscriber) Transcribe(_ context.Context, input audio.Audio) (stt.Result, error) {
 	f.input = input
 	return stt.Result{Text: "turn it on"}, nil
+}
+
+type blockingCoordinatorSpeaker struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingCoordinatorSpeaker) Identify(context.Context, audio.Audio) mlspeaker.Result {
+	close(s.started)
+	<-s.release
+	return mlspeaker.Result{ID: "advisory"}
 }
 
 type coordinatorParser struct{ plan intent.ActionPlan }

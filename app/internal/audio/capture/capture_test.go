@@ -2,7 +2,6 @@ package capture
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -57,14 +56,6 @@ func TestFileCaptureZeroPadsFinalPartialFrame(t *testing.T) {
 	}
 	if _, ok := <-frames; ok {
 		t.Fatal("capture returned extra frame")
-	}
-}
-
-func TestSystemCaptureIsUnsupported(t *testing.T) {
-	var capture audio.Capture = SystemCapture{}
-	frames, err := capture.Capture(context.Background())
-	if frames != nil || !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("frames = %v, error = %v, want unsupported", frames, err)
 	}
 }
 

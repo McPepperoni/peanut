@@ -16,6 +16,7 @@ import (
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
 	"peanut/internal/ml/vad"
+	speakerstore "peanut/internal/speaker"
 )
 
 var (
@@ -23,10 +24,11 @@ var (
 	_ vad.VAD                   = (*VoiceActivityDetector)(nil)
 	_ stt.Transcriber           = (*Transcriber)(nil)
 	_ speaker.SpeakerIdentifier = (*SpeakerIdentifier)(nil)
+	_ speakerstore.Embedder     = (*SpeakerIdentifier)(nil)
 	_ tts.Synthesizer           = (*Synthesizer)(nil)
 )
 
-func TestUnsupportedNativeAdaptersReportUnavailable(t *testing.T) {
+func TestNativeAdaptersHonorCanceledContextBeforeInference(t *testing.T) {
 	frame, err := audio.NewFrame(make([]float32, audio.FrameSamples))
 	if err != nil {
 		t.Fatal(err)
@@ -35,19 +37,38 @@ func TestUnsupportedNativeAdaptersReportUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	if _, err := (&WakeDetector{}).Detect(ctx, frame); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("KWS error = %v, want unavailable", err)
+	if _, err := (&WakeDetector{}).Detect(ctx, frame); !errors.Is(err, context.Canceled) {
+		t.Fatalf("KWS error = %v, want canceled", err)
 	}
-	if _, err := (&VoiceActivityDetector{}).Detect(ctx, frame); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("VAD error = %v, want unavailable", err)
+	if _, err := (&VoiceActivityDetector{}).Detect(ctx, frame); !errors.Is(err, context.Canceled) {
+		t.Fatalf("VAD error = %v, want canceled", err)
 	}
-	if result := (&SpeakerIdentifier{}).Identify(ctx, input); !errors.Is(result.Err, ErrUnavailable) {
-		t.Fatalf("speaker error = %v, want unavailable", result.Err)
+	if result := (&SpeakerIdentifier{}).Identify(ctx, input); !errors.Is(result.Err, context.Canceled) {
+		t.Fatalf("speaker error = %v, want canceled", result.Err)
 	}
-	if _, err := (&Synthesizer{}).Synthesize(ctx, "test"); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("TTS error = %v, want unavailable", err)
+	if _, err := (&Synthesizer{}).Synthesize(ctx, "test"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("TTS error = %v, want canceled", err)
+	}
+}
+
+func TestNativeAdapterCloseIsIdempotent(t *testing.T) {
+	for name, close := range map[string]func() error{
+		"KWS":     (&WakeDetector{}).Close,
+		"VAD":     (&VoiceActivityDetector{}).Close,
+		"speaker": (&SpeakerIdentifier{}).Close,
+		"TTS":     (&Synthesizer{}).Close,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := close(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -63,14 +84,64 @@ func TestNativeSmoke(t *testing.T) {
 		Speaker: filepath.Join(root, ml.SpeakerBundle),
 		TTS:     filepath.Join(root, ml.TTSBundle),
 	}, Provider: ml.CPUProvider, Threads: 1}
-	if err := Open(manifest); err != nil {
+	if err := manifest.Validate(); err != nil {
+		t.Skipf("native sherpa models unavailable: %v", err)
+	}
+	wake, err := NewWakeDetector(manifest)
+	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := audio.NewAudio(audio.SampleRate, audio.Channels, make([]float32, audio.SampleRate))
+	defer wake.Close()
+	voice, err := NewVAD(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer voice.Close()
+	embedder, err := NewSpeakerIdentifier(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer embedder.Close()
+	synthesizer, err := NewSynthesizer(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer synthesizer.Close()
+
+	frame, err := audio.NewFrame(make([]float32, audio.FrameSamples))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wake.Detect(context.Background(), frame); err != nil {
+		t.Fatal(err)
+	}
+	if err := wake.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := voice.Detect(context.Background(), frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := voice.Reset(); err != nil {
+		t.Fatal(err)
+	}
+
+	input, err := audio.NewAudio(audio.SampleRate, audio.Channels, make([]float32, 2*audio.SampleRate))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Transcribe(manifest, input); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := embedder.Embed(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	result, err := synthesizer.Synthesize(context.Background(), "Hello from Peanut.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }

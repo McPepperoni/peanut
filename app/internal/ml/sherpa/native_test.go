@@ -15,6 +15,7 @@ import (
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
 	"peanut/internal/ml/vad"
+	speakerstore "peanut/internal/speaker"
 )
 
 var (
@@ -22,6 +23,7 @@ var (
 	_ vad.VAD                   = (*VoiceActivityDetector)(nil)
 	_ stt.Transcriber           = (*Transcriber)(nil)
 	_ speaker.SpeakerIdentifier = (*SpeakerIdentifier)(nil)
+	_ speakerstore.Embedder     = (*SpeakerIdentifier)(nil)
 	_ tts.Synthesizer           = (*Synthesizer)(nil)
 )
 
@@ -92,55 +94,5 @@ func TestNativeConfigRequiresOfficialSTTFiles(t *testing.T) {
 	_, err := newNativeConfig(manifest)
 	if !errors.Is(err, ml.ErrModelInvalid) {
 		t.Fatalf("native config error = %v, want invalid model", err)
-	}
-}
-
-func validManifest(t *testing.T) ml.Manifest {
-	t.Helper()
-	root := t.TempDir()
-	directory := func(name string) string {
-		path := filepath.Join(root, name)
-		if err := os.Mkdir(path, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	file := func(name string) string {
-		path := filepath.Join(root, name)
-		if err := os.WriteFile(path, []byte("model"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	manifest := ml.Manifest{Paths: ml.Paths{
-		KWS: directory(ml.KWSBundle), VAD: file(ml.VADBundle), STT: directory(ml.STTBundle),
-		Speaker: file(ml.SpeakerBundle), TTS: directory(ml.TTSBundle),
-	}, Provider: ml.CPUProvider, Threads: 1}
-	for _, path := range []string{
-		filepath.Join(manifest.Paths.KWS, "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
-		filepath.Join(manifest.Paths.KWS, "decoder-epoch-12-avg-2-chunk-16-left-64.onnx"),
-		filepath.Join(manifest.Paths.KWS, "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
-		filepath.Join(manifest.Paths.KWS, "tokens.txt"),
-		filepath.Join(manifest.Paths.STT, "model.int8.onnx"),
-		filepath.Join(manifest.Paths.STT, "tokens.txt"),
-		filepath.Join(manifest.Paths.TTS, "en_GB-cori-medium.onnx"),
-		filepath.Join(manifest.Paths.TTS, "tokens.txt"),
-	} {
-		if err := os.WriteFile(path, []byte("model"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.Mkdir(filepath.Join(manifest.Paths.TTS, "espeak-ng-data"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return manifest
-}
-
-func writeSTTFiles(t *testing.T, directory string) {
-	t.Helper()
-	for _, name := range []string{"model.int8.onnx", "tokens.txt"} {
-		if err := os.WriteFile(filepath.Join(directory, name), []byte("model"), 0o644); err != nil {
-			t.Fatal(err)
-		}
 	}
 }

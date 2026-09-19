@@ -80,6 +80,75 @@ func (s *Store) Embedding(ctx context.Context, id string) ([]float32, error) {
 	return embedding, nil
 }
 
+func (s *Store) Match(ctx context.Context, embedding []float32, threshold float32) (string, float32, error) {
+	if s == nil || s.db == nil || len(embedding) == 0 || threshold < 0 || threshold > 1 {
+		return "", 0, errors.New("speaker store, embedding, and threshold are required")
+	}
+	for _, value := range embedding {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return "", 0, errors.New("speaker embedding must contain finite values")
+		}
+	}
+	var queryMagnitude float64
+	for _, value := range embedding {
+		queryMagnitude += float64(value * value)
+	}
+	if queryMagnitude == 0 {
+		return "", 0, errors.New("speaker embedding must have non-zero magnitude")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, embedding FROM speakers`)
+	if err != nil {
+		return "", 0, fmt.Errorf("list speaker embeddings: %w", err)
+	}
+	defer rows.Close()
+	var bestID string
+	var bestScore float32
+	for rows.Next() {
+		var id string
+		var encoded []byte
+		if err := rows.Scan(&id, &encoded); err != nil {
+			return "", 0, fmt.Errorf("read speaker embedding: %w", err)
+		}
+		stored, err := decodeEmbedding(encoded)
+		if err != nil || len(stored) != len(embedding) {
+			continue
+		}
+		var score, storedMagnitude float64
+		for index, value := range embedding {
+			score += float64(value * stored[index])
+			storedMagnitude += float64(stored[index] * stored[index])
+		}
+		if storedMagnitude == 0 {
+			continue
+		}
+		score /= math.Sqrt(queryMagnitude * storedMagnitude)
+		if float32(score) > bestScore {
+			bestID, bestScore = id, float32(score)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", 0, fmt.Errorf("iterate speaker embeddings: %w", err)
+	}
+	if bestScore < threshold {
+		return "", bestScore, nil
+	}
+	return bestID, bestScore, nil
+}
+
+func decodeEmbedding(encoded []byte) ([]float32, error) {
+	if len(encoded) == 0 || len(encoded)%4 != 0 {
+		return nil, errors.New("invalid stored speaker embedding")
+	}
+	embedding := make([]float32, len(encoded)/4)
+	for index := range embedding {
+		embedding[index] = math.Float32frombits(binary.LittleEndian.Uint32(encoded[index*4:]))
+		if math.IsNaN(float64(embedding[index])) || math.IsInf(float64(embedding[index]), 0) {
+			return nil, errors.New("invalid stored speaker embedding")
+		}
+	}
+	return embedding, nil
+}
+
 func Name(result mlspeaker.Result) string {
 	if result.Err != nil || result.ID == "" {
 		return "unknown"

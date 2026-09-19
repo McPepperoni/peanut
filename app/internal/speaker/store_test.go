@@ -63,3 +63,29 @@ func TestNameFallsBackToUnknown(t *testing.T) {
 		t.Fatalf("Name = %q, want unknown", got)
 	}
 }
+
+func TestMatchReturnsEnrolledSpeakerOrUnknown(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "peanut.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store := NewSpeakerStore(db)
+	sample, err := audio.NewAudio(audio.SampleRate, audio.Channels, make([]float32, 320))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enroll(ctx, "alice", []audio.Audio{sample}, &fakeEmbedder{embeddings: [][]float32{{1, 0}}}); err != nil {
+		t.Fatal(err)
+	}
+	if id, score, err := store.Match(ctx, []float32{1, 0}, 0.8); err != nil || id != "alice" || score < 0.99 {
+		t.Fatalf("match = %q, %v, %v", id, score, err)
+	}
+	if id, _, err := store.Match(ctx, []float32{0, 1}, 0.8); err != nil || id != "" {
+		t.Fatalf("unknown match = %q, %v", id, err)
+	}
+}

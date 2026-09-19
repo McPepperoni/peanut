@@ -37,6 +37,14 @@ Unknown manifest fields are rejected. Invalid profiles are reported without disc
 
 Download official bundles from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases), extract them into their profile directories, and add the manifest. Bundle roles may keep their required companion files beside `entry`.
 
+Native sherpa profiles require these exact files:
+
+- KWS: `encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`, `decoder-epoch-12-avg-2-chunk-16-left-64.onnx`, `joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx`, `tokens.txt`, and profile-owned `keywords.txt` in sherpa keyword-file format.
+- VAD: `silero_vad.onnx` as profile entry.
+- STT: `model.int8.onnx` and `tokens.txt`.
+- Speaker: `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx` as profile entry.
+- TTS: `en_GB-cori-medium.onnx`, `tokens.txt`, and `espeak-ng-data/`.
+
 Create a checksum before filling `sha256`:
 
 ```powershell
@@ -71,7 +79,7 @@ Peanut always uses CPU execution. Configure provider `cpu` and a positive SQLite
 
 The `sherpa` build tag enables the CGO C API boundary. Install a released sherpa-onnx C API archive containing `sherpa-onnx/c-api/c-api.h` and the `sherpa-onnx-c-api` shared library; do not clone sherpa-onnx source into this repository. Build from `app/` with its include and library directories:
 
-The tagged build currently performs native inference only for the typed SenseVoice transcriber. KWS, VAD, speaker identification, and TTS expose their typed interfaces but return `sherpa.ErrUnavailable`; their C API wiring still requires validation against installed headers and model bundles. They do not return fabricated inference results.
+The tagged build enables native KWS, Silero VAD, SenseVoice STT, speaker embedding extraction, and Piper/VITS TTS. VAD defaults to a `0.5` speech threshold; Go callers needing another value can pass `sherpa.WithVADThreshold(value)` to `sherpa.NewVAD` without changing manifest or SQLite schema. Speaker extraction implements `internal/speaker.Embedder`; runtime matching returns an enrolled ID or `unknown`, never a fabricated identity. TTS output is linearly resampled to runtime-required 16 kHz mono and then validated.
 
 ```powershell
 $env:CGO_ENABLED = '1'
@@ -90,7 +98,7 @@ CGO_LDFLAGS="-L/opt/sherpa-onnx/lib -Wl,-rpath,/opt/sherpa-onnx/lib" \
 go build -tags sherpa -o ../build/peanut ./cmd/peanut
 ```
 
-Native load/inference smoke is optional, expects the five official bundles directly under a test-only `PEANUT_MODEL_ROOT`, and runs one second of silent 16 kHz mono audio through SenseVoice. This environment variable selects test fixtures only; it is not a runtime configuration mechanism.
+Native load/inference smoke is optional, expects five official bundles directly under test-only `PEANUT_MODEL_ROOT`, and exercises all sherpa adapters. Missing model root or required model files skips smoke. Header and shared library must be installed before tagged test can compile. This environment variable selects test fixtures only; it is not a runtime configuration mechanism.
 
 ```powershell
 $env:PEANUT_MODEL_ROOT = 'C:\models'

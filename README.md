@@ -38,6 +38,8 @@ The production artifact is the native CPU-only binary at root `build/peanut` (or
 
 See [`docs/pi5-validation.md`](docs/pi5-validation.md) for the platform matrix, Raspberry Pi 5 checks, model installation, and native smoke-test boundary.
 
+On Linux, production audio uses ALSA `arecord` and `aplay` at 16 kHz mono. Install ALSA utilities and set SQLite `Audio.InputDevice` / `Audio.OutputDevice` when default devices are not suitable. Other desktop platforms retain explicit unsupported system-audio errors.
+
 ## Production installer
 
 With Peanut's local configuration API running, run `app/internal/install/install.sh` on Linux or `app/internal/install/install.ps1` on Windows. The installer builds native Peanut, then asks whether Home Assistant already exists. It accepts that instance's URL/token or pulls and runs only the official Home Assistant Container image with Docker or Podman. Complete Home Assistant onboarding and create a long-lived token when prompted.

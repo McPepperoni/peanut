@@ -27,35 +27,35 @@ func unavailable() error {
 }
 
 func NewWakeDetector(manifest ml.Manifest) (*WakeDetector, error) {
-	if err := manifest.Validate(); err != nil {
+	if err := manifest.ValidateRole("kws"); err != nil {
 		return nil, err
 	}
 	return nil, unavailable()
 }
 
-func NewVAD(manifest ml.Manifest) (*VoiceActivityDetector, error) {
-	if err := manifest.Validate(); err != nil {
+func NewVAD(manifest ml.Manifest, options ...VADOption) (*VoiceActivityDetector, error) {
+	if _, err := newVADConfig(manifest, options...); err != nil {
 		return nil, err
 	}
 	return nil, unavailable()
 }
 
 func NewTranscriber(manifest ml.Manifest) (*Transcriber, error) {
-	if err := manifest.Validate(); err != nil {
+	if err := manifest.ValidateRole("stt"); err != nil {
 		return nil, err
 	}
 	return nil, unavailable()
 }
 
 func NewSpeakerIdentifier(manifest ml.Manifest) (*SpeakerIdentifier, error) {
-	if err := manifest.Validate(); err != nil {
+	if err := manifest.ValidateRole("speaker"); err != nil {
 		return nil, err
 	}
 	return nil, unavailable()
 }
 
 func NewSynthesizer(manifest ml.Manifest) (*Synthesizer, error) {
-	if err := manifest.Validate(); err != nil {
+	if err := manifest.ValidateRole("tts"); err != nil {
 		return nil, err
 	}
 	return nil, unavailable()
@@ -70,6 +70,8 @@ func (*WakeDetector) Detect(_ context.Context, frame audio.Frame) (kws.Result, e
 
 func (*WakeDetector) Reset() error { return unavailable() }
 
+func (*WakeDetector) Close() error { return nil }
+
 func (*VoiceActivityDetector) Detect(_ context.Context, frame audio.Frame) (vad.Result, error) {
 	if err := frame.Validate(); err != nil {
 		return vad.Result{}, err
@@ -78,6 +80,8 @@ func (*VoiceActivityDetector) Detect(_ context.Context, frame audio.Frame) (vad.
 }
 
 func (*VoiceActivityDetector) Reset() error { return unavailable() }
+
+func (*VoiceActivityDetector) Close() error { return nil }
 
 func (*Transcriber) Transcribe(_ context.Context, input audio.Audio) (stt.Result, error) {
 	if err := input.Validate(); err != nil {
@@ -93,9 +97,20 @@ func (*SpeakerIdentifier) Identify(_ context.Context, input audio.Audio) speaker
 	return speaker.Result{Err: unavailable()}
 }
 
+func (*SpeakerIdentifier) Embed(_ context.Context, input audio.Audio) ([]float32, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	return nil, unavailable()
+}
+
+func (*SpeakerIdentifier) Close() error { return nil }
+
 func (*Synthesizer) Synthesize(_ context.Context, _ string) (tts.Result, error) {
 	return tts.Result{}, unavailable()
 }
+
+func (*Synthesizer) Close() error { return nil }
 
 // Open reports the omitted native runtime without making default builds depend on CGO.
 func Open(manifest ml.Manifest) error {
@@ -107,7 +122,7 @@ func Open(manifest ml.Manifest) error {
 
 // Transcribe reports the omitted runtime after validating boundary inputs.
 func Transcribe(manifest ml.Manifest, input audio.Audio) (string, error) {
-	if err := manifest.Validate(); err != nil {
+	if err := manifest.ValidateRole("stt"); err != nil {
 		return "", err
 	}
 	if err := input.Validate(); err != nil {

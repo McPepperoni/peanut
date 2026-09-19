@@ -48,6 +48,21 @@ func TestManifestRequiresPositiveThreads(t *testing.T) {
 	}
 }
 
+func TestManifestRoleValidationAllowsCommandScopedBundles(t *testing.T) {
+	manifest := validTestManifest(t)
+	for _, path := range []string{manifest.Paths.KWS, manifest.Paths.VAD, manifest.Paths.STT, manifest.Paths.Speaker} {
+		if err := os.RemoveAll(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manifest.ValidateRole("tts"); err != nil {
+		t.Fatalf("TTS role validation = %v", err)
+	}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("full validation accepted missing roles")
+	}
+}
+
 func TestManifestRequiresCPUProvider(t *testing.T) {
 	for _, provider := range []string{"", "CPU", " cpu", "cpu "} {
 		manifest := validTestManifest(t)
@@ -87,6 +102,7 @@ func TestManifestRequiresBundleFiles(t *testing.T) {
 		{"KWS", "decoder-epoch-12-avg-2-chunk-16-left-64.onnx", func(paths Paths) string { return paths.KWS }},
 		{"KWS", "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx", func(paths Paths) string { return paths.KWS }},
 		{"KWS", "tokens.txt", func(paths Paths) string { return paths.KWS }},
+		{"KWS", "keywords.txt", func(paths Paths) string { return paths.KWS }},
 		{"STT", "model.int8.onnx", func(paths Paths) string { return paths.STT }},
 		{"STT", "tokens.txt", func(paths Paths) string { return paths.STT }},
 		{"TTS", "en_GB-cori-medium.onnx", func(paths Paths) string { return paths.TTS }},
@@ -187,6 +203,7 @@ func modelDir(t *testing.T, root, name string) string {
 			"decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
 			"joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
 			"tokens.txt",
+			"keywords.txt",
 		} {
 			touch(t, path, file)
 		}

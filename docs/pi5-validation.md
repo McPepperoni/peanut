@@ -71,7 +71,7 @@ Verify from the repository root:
 
 Optional sherpa validation needs a released sherpa-onnx C API archive, matching headers and shared library, a CPU-only build with `CGO_ENABLED=1`, and the official model bundles. Do not clone sherpa-onnx into this repository. The native build must use the matching include/library paths and ARM64 shared library on Pi 5.
 
-The current common audio boundary does not provide a system capture/player implementation. A configured runtime therefore reports `system audio capture is unsupported on <platform>` or `system audio playback is unsupported on <platform>` until a platform backend is supplied. File WAV adapters and pure tests remain available. A Pi end-to-end check additionally needs an installed, accessible system audio backend and its device permissions; backend installation is outside this task.
+Linux uses the system `arecord` and `aplay` utilities as its narrow audio boundary. Install ALSA utilities, grant the service access to the selected devices, and set SQLite `Audio.InputDevice` / `Audio.OutputDevice` when the defaults are not correct. Capture and playback use raw signed 16-bit little-endian PCM at 16 kHz mono; capture is emitted as 320-sample frames. Non-Linux platforms keep the unsupported runtime boundary. File WAV adapters and pure tests remain available.
 
 Startup validates all six active roles before opening native audio. Useful failure prefixes:
 
@@ -79,6 +79,7 @@ Startup validates all six active roles before opening native audio. Useful failu
 - `scan model roles at <root>:` — model-root scan or runtime-swap failure.
 - `build with the sherpa-onnx native adapter` — binary lacks the optional native runtime.
 - `system audio ... is unsupported on <platform>` — no system audio backend for the target.
+- `start arecord` or `start aplay` — ALSA utility is missing or cannot be started.
 
 ## Pi 5 runtime checks
 

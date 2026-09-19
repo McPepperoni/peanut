@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"peanut/internal/api"
+	"peanut/internal/audio/playback"
 	"peanut/internal/config"
 	"peanut/internal/models"
 	"peanut/internal/providers"
@@ -59,7 +60,52 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 			return runConfigured(runCtx, runtimeConfig, db)
 		}
 	}
+	if args[0] == "test-audio" && dependencies.Player == nil {
+		dependencies.Player = playback.SystemPlayer{Device: runtimeConfig.Audio.OutputDevice}
+	}
+	var commandRuntime *configuredRuntime
+	if needsCommandRuntime(args[0], dependencies) {
+		commandRuntime, err = newCommandRuntime(ctx, runtimeConfig, db, args[0])
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = closeRuntimeResources(commandRuntime.capture, commandRuntime.player)
+			_ = commandRuntime.modelSet.Close()
+		}()
+		configured := commandRuntime.commandDependencies(ctx)
+		if dependencies.Player == nil {
+			dependencies.Player = configured.Player
+		}
+		if dependencies.Synthesizer == nil {
+			dependencies.Synthesizer = configured.Synthesizer
+		}
+		if dependencies.Transcriber == nil {
+			dependencies.Transcriber = configured.Transcriber
+		}
+		if dependencies.Speaker == nil {
+			dependencies.Speaker = configured.Speaker
+		}
+		if dependencies.Enroll == nil {
+			dependencies.Enroll = configured.Enroll
+		}
+	}
 	return dispatch(ctx, args, dependencies, output)
+}
+
+func needsCommandRuntime(command string, dependencies commandDependencies) bool {
+	switch command {
+	case "speak":
+		return dependencies.Player == nil || dependencies.Synthesizer == nil
+	case "transcribe":
+		return dependencies.Transcriber == nil
+	case "enroll":
+		return dependencies.Enroll == nil
+	case "test-audio":
+		return false
+	default:
+		return false
+	}
 }
 
 func serveAPI(ctx context.Context, db *sqlite.DB) error {

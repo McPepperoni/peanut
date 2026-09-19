@@ -18,6 +18,8 @@ type Config struct {
 	SynthesisTimeout       time.Duration
 	PlaybackTimeout        time.Duration
 	PlaybackTail           time.Duration
+	DebugAudio             bool
+	DebugAudioPath         string
 }
 
 func DefaultConfig() Config {

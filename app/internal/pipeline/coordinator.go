@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"peanut/internal/audio"
 	"peanut/internal/intent"
 	"peanut/internal/interaction"
 	"peanut/internal/ml/kws"
+	mlspeaker "peanut/internal/ml/speaker"
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
 	"peanut/internal/ml/vad"
@@ -25,6 +28,7 @@ type Dependencies struct {
 	Transcriber     stt.Transcriber
 	IntentParser    intent.IntentParser
 	Synthesizer     tts.Synthesizer
+	Speaker         mlspeaker.SpeakerIdentifier
 	Registry        *providers.Registry
 	Capabilities    intent.CapabilitySnapshot
 }
@@ -200,11 +204,31 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 	if err != nil {
 		return err
 	}
-	transcription, err := c.deps.Transcriber.Transcribe(ctx, input)
-	if err != nil {
+	if c.cfg.DebugAudio {
+		if err := writeDebugAudio(c.cfg.DebugAudioPath, input); err != nil {
+			return err
+		}
+	}
+	transcriptionCh := make(chan struct {
+		result stt.Result
+		err    error
+	}, 1)
+	go func() {
+		result, err := c.deps.Transcriber.Transcribe(ctx, input)
+		transcriptionCh <- struct {
+			result stt.Result
+			err    error
+		}{result, err}
+	}()
+	if c.deps.Speaker != nil {
+		speakerCh := make(chan mlspeaker.Result, 1)
+		go func() { speakerCh <- c.deps.Speaker.Identify(ctx, input) }()
+	}
+	transcription := <-transcriptionCh
+	if err := transcription.err; err != nil {
 		return err
 	}
-	plan, err := c.deps.IntentParser.Parse(ctx, transcription.Text, c.deps.Capabilities)
+	plan, err := c.deps.IntentParser.Parse(ctx, transcription.result.Text, c.deps.Capabilities)
 	if err != nil {
 		return err
 	}
@@ -281,6 +305,25 @@ func (c *Coordinator) process(ctx context.Context, samples []float32) error {
 		return err
 	}
 	return c.machine.Transition(PlaybackFinished)
+}
+
+func writeDebugAudio(root string, input audio.Audio) error {
+	if root == "" {
+		return errors.New("debug audio path is required")
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return fmt.Errorf("create debug audio directory: %w", err)
+	}
+	name := fmt.Sprintf("command-%d.wav", time.Now().UnixNano())
+	file, err := os.Create(filepath.Join(root, name))
+	if err != nil {
+		return fmt.Errorf("create debug audio: %w", err)
+	}
+	defer file.Close()
+	if err := audio.WriteWAV(file, input); err != nil {
+		return fmt.Errorf("write debug audio: %w", err)
+	}
+	return nil
 }
 
 func runSynthesis(ctx context.Context, timeout time.Duration, synthesizer tts.Synthesizer, text string) (tts.Result, error) {
