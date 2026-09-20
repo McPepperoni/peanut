@@ -158,7 +158,7 @@ Applied all requested review fixes without Task 4 runtime wiring:
 Passed:
 
 ```text
-g++ -std=c++17 -fsyntax-only -Iapp/internal/llama -Ithird-party/llama.cpp/include -Ithird-party/llama.cpp/ggml/include -Ithird-party/llama.cpp/common app/internal/llama/native.cpp
+g++ -std=c++17 -fsyntax-only -I./app/internal/llama -I./third-party/llama.cpp/include -I./third-party/llama.cpp/ggml/include -I./third-party/llama.cpp/common ./app/internal/llama/native.cpp
 bash -n tools/build-llama.sh
 go test -count=1 ./internal/llama
 ok   peanut/internal/llama  0.325s
@@ -184,5 +184,43 @@ go test -count=1 ./internal/llama
 ok   peanut/internal/llama 0.347s
 
 go vet ./internal/llama
+passed
+```
+
+## Repeated-generation context reset fix
+
+`peanut_llama_generate` now clears the pinned llama memory with
+`llama_memory_clear(llama_get_memory(engine->context), true)` after native
+input validation and before tokenization. A null context or memory handle
+returns `PEANUT_LLAMA_CONTEXT_FAILED` safely. This prevents a reused native
+context from carrying KV state between generations.
+
+Added `TestNativeGenerateClearsContextMemoryBeforeTokenization`, a focused
+source-order regression proving the pinned clear call remains before
+`llama_tokenize`.
+
+TDD evidence:
+
+```text
+RED: go test -count=1 ./internal/llama
+FAIL TestNativeGenerateClearsContextMemoryBeforeTokenization: native generation does not clear context memory with pinned API
+
+GREEN: go test -count=1 ./internal/llama -run TestNativeGenerateClearsContextMemoryBeforeTokenization -v
+PASS
+```
+
+Verification:
+
+```text
+go test -count=1 ./internal/llama
+ok   peanut/internal/llama 0.283s
+
+go vet ./internal/llama
+passed
+
+g++ -std=c++17 -fsyntax-only -Iapp/internal/llama -Ithird-party/llama.cpp/include -Ithird-party/llama.cpp/ggml/include -Ithird-party/llama.cpp/common app/internal/llama/native.cpp
+passed
+
+git diff --check
 passed
 ```

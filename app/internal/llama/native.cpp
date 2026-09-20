@@ -168,6 +168,10 @@ peanut_llama_status peanut_llama_generate(
 	*output_len = 0;
 	peanut_llama_free_output(engine);
 	engine->abort_requested.store(false, std::memory_order_relaxed);
+	if (engine->context == NULL || llama_get_memory(engine->context) == NULL) {
+		return PEANUT_LLAMA_CONTEXT_FAILED;
+	}
+	llama_memory_clear(llama_get_memory(engine->context), true);
 
 	const struct llama_vocab *vocab = llama_model_get_vocab(engine->model);
 	int32_t prompt_tokens_len = llama_tokenize(vocab, prompt, (int32_t) strlen(prompt), NULL, 0, true, true);
