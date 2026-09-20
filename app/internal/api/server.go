@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"peanut/internal/config"
 	"peanut/internal/intent"
+	"peanut/internal/logging"
 	"peanut/internal/models"
 	"peanut/internal/storage/sqlite"
 )
@@ -44,13 +46,23 @@ type Server struct {
 	config        *sqlite.ConfigStore
 	refresher     Refresher
 	modelReloader ModelReloader
+	logger        *slog.Logger
 	handler       http.Handler
 	boundLAN      bool
 	configMu      sync.Mutex
 }
 
 func NewServer(db *sqlite.DB, refresher Refresher, modelReloader ModelReloader) *Server {
-	server := &Server{config: sqlite.NewConfigStore(db), refresher: refresher, modelReloader: modelReloader}
+	return NewServerWithLogger(db, refresher, modelReloader, nil)
+}
+
+func NewServerWithLogger(db *sqlite.DB, refresher Refresher, modelReloader ModelReloader, logger *slog.Logger) *Server {
+	server := &Server{
+		config:        sqlite.NewConfigStore(db),
+		refresher:     refresher,
+		modelReloader: modelReloader,
+		logger:        logging.Normalize(logger),
+	}
 	if cfg, err := server.load(context.Background()); err == nil {
 		server.boundLAN = cfg.API.AllowLAN || !isLoopbackAddress(cfg.API.Address)
 	}
@@ -62,8 +74,59 @@ func NewServer(db *sqlite.DB, refresher Refresher, modelReloader ModelReloader) 
 	mux.HandleFunc("/api/v1/openapi.json", serveEmbedded("application/json", openAPIDocument))
 	mux.HandleFunc("/docs", serveEmbedded("text/html; charset=utf-8", docsPage))
 	mux.HandleFunc("/scalar.js", serveEmbedded("text/javascript; charset=utf-8", scalarScript))
-	server.handler = server.authenticate(mux)
+	server.handler = server.requestLogger(server.authenticate(mux))
 	return server
+}
+
+func (s *Server) requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		response := &loggingResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(response, r)
+
+		status := response.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
+		level := slog.LevelInfo
+		if status >= http.StatusInternalServerError {
+			level = slog.LevelError
+		}
+		s.logger.LogAttrs(r.Context(), level, "api.request",
+			slog.String("method", r.Method),
+			slog.String("route", route),
+			slog.Int("status", status),
+			slog.Int("bytes", response.bytes),
+			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+		)
+	})
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *loggingResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *loggingResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(body)
+	w.bytes += n
+	return n, err
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }

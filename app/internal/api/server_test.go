@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,9 +14,63 @@ import (
 
 	"peanut/internal/config"
 	"peanut/internal/intent"
+	"peanut/internal/logging"
 	"peanut/internal/models"
 	"peanut/internal/storage/sqlite"
 )
+
+func TestServerLogsRequestCompletion(t *testing.T) {
+	db := apiDB(t)
+	var output bytes.Buffer
+	server := NewServerWithLogger(db, nil, nil, logging.New(&output))
+
+	response := request(t, server.Handler(), http.MethodGet, "/docs", "", "authorization-secret")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	log := output.String()
+	for _, want := range []string{
+		"level=INFO",
+		"method=GET",
+		"route=/docs",
+		"status=200",
+		"bytes=",
+		"duration_ms=",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("log %q missing %q", log, want)
+		}
+	}
+	if strings.Contains(log, "authorization-secret") || strings.Contains(log, "/docs") == false {
+		t.Fatalf("log leaked or omitted expected route: %q", log)
+	}
+}
+
+func TestServerDoesNotLogRequestSecretsBodiesOrPaths(t *testing.T) {
+	db := apiDB(t)
+	var output bytes.Buffer
+	server := NewServerWithLogger(db, nil, nil, logging.New(&output))
+	req := httptest.NewRequest(http.MethodPost, "/missing-secret-path?token=query-secret", strings.NewReader("body-secret"))
+	req.Header.Set("Authorization", "Bearer authorization-secret")
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, req)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	log := output.String()
+	for _, forbidden := range []string{"missing-secret-path", "query-secret", "authorization-secret", "body-secret"} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("log leaked %q: %s", forbidden, log)
+		}
+	}
+	for _, want := range []string{"level=INFO", "method=POST", "route=unmatched", "status=404", "bytes=", "duration_ms="} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("log %q missing %q", log, want)
+		}
+	}
+}
 
 func TestServerDefaultsToLocalhostAndRedactsSecrets(t *testing.T) {
 	db := apiDB(t)
