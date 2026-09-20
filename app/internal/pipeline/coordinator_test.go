@@ -1,14 +1,17 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"peanut/internal/audio"
 	"peanut/internal/intent"
+	"peanut/internal/logging"
 	"peanut/internal/ml/kws"
 	mlspeaker "peanut/internal/ml/speaker"
 	"peanut/internal/ml/stt"
@@ -67,6 +70,7 @@ func TestCoordinatorRunsSeparateUtteranceHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	player := &coordinatorPlayer{}
+	var logs bytes.Buffer
 	transcriber := &coordinatorTranscriber{}
 	speaker := &blockingCoordinatorSpeaker{started: make(chan struct{}), release: make(chan struct{})}
 	defer close(speaker.release)
@@ -91,6 +95,7 @@ func TestCoordinatorRunsSeparateUtteranceHappyPath(t *testing.T) {
 			ID: "capability.test", ProviderID: "provider.test", DeviceID: "device.test", Type: "switch", Name: "Test switch",
 			Actions: []intent.ActionDefinition{{ID: "power.set", Arguments: map[string]intent.ArgumentDefinition{"on": {Type: intent.TypeBoolean, Required: true}}}},
 		}}},
+		Logger: logging.New(&logs),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +121,16 @@ func TestCoordinatorRunsSeparateUtteranceHappyPath(t *testing.T) {
 	}
 	if len(provider.executed) != 1 || provider.executed[0].ActionID != "power.set" {
 		t.Fatalf("executed = %#v", provider.executed)
+	}
+	for _, want := range []string{"msg=pipeline.start", "msg=pipeline.wake", "msg=pipeline.process", "status=succeeded"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("logs %q missing %q", logs.String(), want)
+		}
+	}
+	for _, forbidden := range []string{"turn it on", "0.1"} {
+		if strings.Contains(logs.String(), forbidden) {
+			t.Fatalf("logs leaked %q: %s", forbidden, logs.String())
+		}
 	}
 }
 
