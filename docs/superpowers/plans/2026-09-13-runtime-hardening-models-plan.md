@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Harden Peanut startup/API/runtime boundaries and make local model replacement work by dropping validated profiles into `models/`.
+**Goal:** Harden Peanut startup/API/runtime boundaries and make local sherpa model replacement work by dropping validated profiles into `models/`, while selecting the intent model through the flat external `Models.IntentModel` GGUF contract.
 
-**Architecture:** Keep core Go packages platform-neutral. Add one filesystem model registry that discovers profiles, persists metadata in SQLite, and atomically swaps validated runtime roles. Extend the existing API and CLI; keep native audio/ML behind optional platform/build boundaries.
+**Architecture:** Keep core Go packages platform-neutral. Add one filesystem model registry that discovers sherpa profiles, persists their metadata in SQLite, and atomically swaps validated sherpa roles. Resolve the intent model separately as the flat external GGUF named by `Models.IntentModel`. Extend the existing API and CLI; keep native audio/ML behind optional platform/build boundaries.
 
 **Tech Stack:** Go standard library, existing SQLite driver, existing HTTP server, OpenAPI 3.1 JSON, locally served Scalar API Reference asset, Go build tags.
 
@@ -16,8 +16,8 @@
 - Models and audio streams stay outside SQLite and Git.
 - Intent model only emits structured intent plans; CPU-only and reasoning disabled; it never writes spoken responses.
 - Core Go packages remain OS-neutral; unsupported native backends return runtime errors instead of breaking pure builds.
-- `models/` is model root. GET `/api/v1/models` scans and reloads it.
-- Invalid model reloads preserve prior valid runtime for that role.
+- `models/` is model root. GET `/api/v1/models` scans and reloads sherpa profiles; `Models.IntentModel` selects a separate flat `.gguf` file directly under that root.
+- Invalid sherpa profile reloads preserve prior valid runtime for that role.
 - LAN API binding requires pairing/authentication; secrets remain write-only and redacted.
 - Every production behavior change starts with a failing test and ends with `cd app; go test ./...` passing.
 
@@ -25,7 +25,7 @@
 
 ## File map
 
-- `app/internal/models/registry.go`: model profile schema, filesystem discovery, validation, and role selection.
+- `app/internal/models/registry.go`: sherpa model profile schema, filesystem discovery, validation, and role selection.
 - `app/internal/models/registry_test.go`: temporary-directory discovery and reload tests.
 - `app/internal/storage/sqlite/migrations/001_initial.sql`: model metadata table.
 - `app/internal/storage/sqlite/models.go`: typed model metadata store.
@@ -54,10 +54,11 @@
 - Modify: `app/cmd/peanut/runtime.go`
 
 **Interfaces:**
-- Produces `models.Profile`, `models.Role`, `models.Registry`, `(*Registry).Scan(context.Context) (models.Snapshot, error)`, and `(*Registry).Active(models.Role) (models.Profile, bool)`.
+- Produces `models.Profile`, `models.Role`, `models.Registry`, `(*Registry).Scan(context.Context) (models.Snapshot, error)`, and `(*Registry).Active(models.Role) (models.Profile, bool)` for sherpa profiles.
 - `Profile` fields: `ID string`, `Role Role`, `Runtime string`, `Path string`, `Entry string`, `SHA256 string`, `Threads int`, `Valid bool`, `Error string`.
-- `Role` values: `kws`, `vad`, `stt`, `speaker`, `tts`, `intent`.
+- `Role` values: `kws`, `vad`, `stt`, `speaker`, `tts`.
 - `Registry` consumes `models.Root string`, SQLite model store, and a callback `func(context.Context, Snapshot) error` for runtime swap.
+- The intent model is not a registry profile: validate `Models.IntentModel` as a flat regular `.gguf` filename contained directly under `Models.Root`.
 - Generic intent parser name becomes `ModelParser`; constructor becomes `NewModelParser`; parser still implements `intent.IntentParser` and returns only validated `ActionPlan`.
 
 - [ ] **Step 1: Write failing model discovery tests.**
@@ -65,11 +66,11 @@
 ```go
 func TestRegistryScansManifestProfiles(t *testing.T) {
 	root := t.TempDir()
-	writeModelManifest(t, root, "intent/local", `{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf","sha256":""}`)
+	writeModelManifest(t, root, "stt/local", `{"id":"stt-local","role":"stt","runtime":"local","entry":"model.int8.onnx","sha256":""}`)
 	registry := NewRegistry(root, fakeModelStore{}, nil)
 	snapshot, err := registry.Scan(context.Background())
 	if err != nil { t.Fatal(err) }
-	if got := snapshot.Profiles[0].ID; got != "intent-local" { t.Fatalf("id = %q", got) }
+	if got := snapshot.Profiles[0].ID; got != "stt-local" { t.Fatalf("id = %q", got) }
 }
 
 func TestRegistryRejectsPathOutsideRoot(t *testing.T) {
@@ -81,10 +82,10 @@ func TestRegistryRejectsPathOutsideRoot(t *testing.T) {
 }
 
 func TestRegistryKeepsPriorRoleWhenReloadFails(t *testing.T) {
-	registry := registryWithValidIntent(t)
+	registry := registryWithValidSTT(t)
 	registry.swap = func(context.Context, Snapshot) error { return errors.New("load failed") }
 	if _, err := registry.Scan(context.Background()); err == nil { t.Fatal("want swap error") }
-	if _, ok := registry.Active(RoleIntent); !ok { t.Fatal("prior role was discarded") }
+	if _, ok := registry.Active(RoleSTT); !ok { t.Fatal("prior role was discarded") }
 }
 ```
 
@@ -118,16 +119,16 @@ Implement `ModelStore.ReplaceSnapshot(ctx, []Profile) error` in one transaction 
 
 - [ ] **Step 4: Implement manifest discovery and validation.**
 
-Scan only direct children matching `models/<role>/<profile>/model.json`. Decode with `DisallowUnknownFields`; require valid role, non-empty ID/runtime/entry, and a regular entry path contained within the profile directory. If `sha256` is present, hash the entry file with `crypto/sha256` and require exact lowercase/uppercase-insensitive match. Return invalid profiles in the snapshot instead of aborting the whole scan. Sort profiles by ID.
+Scan only direct sherpa profile children matching `models/<role>/<profile>/model.json`. Decode with `DisallowUnknownFields`; require a valid sherpa role, non-empty ID/runtime/entry, and a regular entry path contained within the profile directory. If `sha256` is present, hash the entry file with `crypto/sha256` and require exact lowercase/uppercase-insensitive match. Return invalid profiles in the snapshot instead of aborting the whole scan. Sort profiles by ID. Do not scan the flat intent GGUF as a profile; resolve and validate `Models.IntentModel` separately.
 
 Use this manifest shape:
 
 ```json
 {
-  "id": "intent-local",
-  "role": "intent",
+  "id": "stt-local",
+  "role": "stt",
   "runtime": "local",
-  "entry": "model.gguf",
+  "entry": "model.int8.onnx",
   "sha256": "",
   "threads": 4
 }
@@ -139,7 +140,7 @@ Rename `QwenParser` to `ModelParser`, `NewQwenParser` to `NewModelParser`, and t
 
 - [ ] **Step 6: Connect runtime configuration to `models/`.**
 
-Replace default role paths with `Models.Root = "models"`; preserve `Threads` and `CPUOnly`. In `runtime.go`, create a registry, scan it before constructing adapters, and map active profiles to the existing `ml.Manifest`. Return an error containing role and path when required active roles are missing or invalid.
+Replace default role paths with `Models.Root = "models"`; preserve `Models.IntentModel`, `Threads`, and `CPUOnly`. In `runtime.go`, create a registry, scan sherpa profiles before constructing adapters, resolve the flat `Models.IntentModel` GGUF separately, and map active sherpa profiles to the existing `ml.Manifest`. Return an error containing the sherpa role and path when a required profile is missing or invalid, or the configured GGUF filename/path when the intent model is missing or invalid.
 
 - [ ] **Step 7: Run tests and commit.**
 
@@ -174,7 +175,7 @@ feat: add generic model registry
 
 ```go
 func TestModelsGETReloadsAndReturnsSnapshot(t *testing.T) {
-	reloader := &fakeModelReloader{snapshot: models.Snapshot{Profiles: []models.Profile{{ID:"intent-local", Role:models.RoleIntent, Valid:true}}}}
+	reloader := &fakeModelReloader{snapshot: models.Snapshot{Profiles: []models.Profile{{ID:"stt-local", Role:models.RoleSTT, Valid:true}}}}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
 	rec := httptest.NewRecorder()
 	NewServer(db, nil, reloader).Handler().ServeHTTP(rec, req)
@@ -188,7 +189,7 @@ func TestModelsGETKeepsPreviousSnapshotOnReloadError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	NewServer(db, nil, reloader).Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway { t.Fatalf("status = %d", rec.Code) }
-	if _, ok := reloader.Active(models.RoleIntent); !ok { t.Fatal("active role was erased") }
+	if _, ok := reloader.Active(models.RoleSTT); !ok { t.Fatal("active role was erased") }
 }
 
 func TestDocsEndpointsAreLocalAndJSON(t *testing.T) {
@@ -257,11 +258,11 @@ feat: expose model reload and local api docs
 ```go
 func TestModelCommandsUseModelsRoot(t *testing.T) {
 	root := t.TempDir()
-	writeValidIntentManifest(t, root)
+	writeValidSTTManifest(t, root)
 	var output bytes.Buffer
 	deps := commandDependencies{ModelRoot: root}
 	if err := dispatch(context.Background(), []string{"model", "list"}, deps, &output); err != nil { t.Fatal(err) }
-	if !strings.Contains(output.String(), "intent-local") { t.Fatalf("output = %q", output.String()) }
+	if !strings.Contains(output.String(), "stt-local") { t.Fatalf("output = %q", output.String()) }
 }
 
 func TestRunFailsBeforeAudioWhenRequiredModelMissing(t *testing.T) {
@@ -278,11 +279,11 @@ Expected: FAIL because model command dependencies and platform files do not exis
 
 - [ ] **Step 3: Add model CLI commands.**
 
-Extend `commandDependencies` with `ModelRoot string`. Handle `model list` by scanning and printing `id role runtime valid path`; handle `model verify` by scanning and printing invalid profile errors, returning nonzero error when any profile is invalid. Keep no CLI framework and no environment lookup.
+Extend `commandDependencies` with `ModelRoot string`. Handle `model list` by scanning sherpa profiles and printing `id role runtime valid path`; handle `model verify` by scanning and printing invalid profile errors, returning nonzero error when any profile is invalid. Keep flat intent-GGUF validation in runtime startup; keep no CLI framework and no environment lookup.
 
 - [ ] **Step 4: Make startup validate before native construction.**
 
-Have `runConfigured` scan the model registry, require active valid profiles for `kws`, `vad`, `stt`, `speaker`, `tts`, and `intent`, then construct adapters. Wrap each failure as `load <role> model: ...`. Do not start capture or coordinator when validation fails.
+Have `runConfigured` scan the model registry, require active valid profiles for `kws`, `vad`, `stt`, `speaker`, and `tts`, resolve `Models.IntentModel` as the flat external GGUF, then construct adapters. Wrap sherpa failures as `load <role> model: ...` and intent-GGUF failures as `load intent model: ...`. Do not start capture or coordinator when validation fails.
 
 - [ ] **Step 5: Add platform build boundaries.**
 
@@ -340,7 +341,7 @@ Expected: commands are copyable and output path is `build/peanut` or `build/pean
 
 - [ ] **Step 2: Document model installation and verification.**
 
-Document `models/<role>/<profile>/model.json`, each manifest field, CPU-only operation, checksum creation, `peanut model verify`, and GET `/api/v1/models` reload. State that model files are ignored by Git and never written to SQLite.
+Document the five sherpa roles in `models/<role>/<profile>/model.json`, each manifest field, and the separate flat `Models.IntentModel` GGUF directly under `Models.Root`. Cover CPU-only operation, checksum creation for profile entries, `peanut model verify`, and GET `/api/v1/models` reload. State that model files are ignored by Git and never written to SQLite.
 
 - [ ] **Step 3: Document platform matrix and Pi checks.**
 

@@ -34,23 +34,23 @@ Core Go packages remain OS-neutral. File/stdin audio adapters compile everywhere
 
 ## Model contract
 
-Model files live under the repository/runtime root `models/` directory. SQLite stores selected profiles and validation metadata, never model bytes.
+Sherpa model bundles live under the repository/runtime root `models/` directory. SQLite stores selected profile metadata, never model bytes. The intent model is separate: `Models.IntentModel` selects one external `.gguf` filename directly under `Models.Root`.
 
-Each discovered model profile contains:
+Each discovered sherpa model profile contains:
 
 - stable ID;
-- role: `kws`, `vad`, `stt`, `speaker`, `tts`, or `intent`;
+- role: `kws`, `vad`, `stt`, `speaker`, or `tts`;
 - local path;
 - format/runtime;
 - checksum;
 - CPU thread count;
 - enabled state.
 
-One profile is active per role. File names or small local manifests map files to roles; absolute paths are not hardcoded into runtime code.
+One profile is active per sherpa role. Small local manifests map bundle files to roles; absolute paths are not hardcoded into runtime code. The flat intent GGUF has no profile or role manifest and is validated as a regular `.gguf` file contained directly in `Models.Root`.
 
-`GET /api/v1/models` is intentionally a read-and-reload operation. It scans `models/`, discovers supported files, validates manifests/checksums, reconciles SQLite metadata, attempts a complete runtime swap for valid roles, and returns active, available, and invalid models. A failed role keeps its previous valid runtime. A reload lock ensures each request observes either the old or new complete runtime.
+`GET /api/v1/models` is intentionally a read-and-reload operation for sherpa profiles. It scans `models/`, discovers supported profiles, validates manifests/checksums, reconciles SQLite metadata, attempts a complete runtime swap for valid sherpa roles, and returns active, available, and invalid profiles. The flat intent GGUF is resolved separately from `Models.IntentModel`. A failed role keeps its previous valid runtime. A reload lock ensures each request observes either the old or new complete runtime.
 
-The CLI exposes the same behavior with `peanut model list` and `peanut model verify`. Explicit model upload/download and delete commands are out of scope. Users place model files in `models/`.
+The CLI exposes the same sherpa-profile behavior with `peanut model list` and `peanut model verify`. Explicit model upload/download and delete commands are out of scope. Users place sherpa bundles and the external intent GGUF in `models/`.
 
 ## API and Scalar
 
@@ -66,8 +66,9 @@ audio -> detector -> transcript -> structured intent model JSON -> Go validation
      -> provider action -> static result/TTS -> playback
 ```
 
-- Missing required model: startup fails with role and exact path.
-- Invalid replacement: role is reported invalid; prior valid role remains active.
+- Missing required sherpa profile: startup fails with role and exact path.
+- Missing or invalid `Models.IntentModel`: startup fails with the configured GGUF filename/path.
+- Invalid sherpa replacement: role is reported invalid; prior valid role remains active.
 - Malformed intent JSON or unknown capability: reject without provider execution.
 - Home Assistant failure: return classified provider error; keep runtime alive.
 - Unsupported audio backend: return platform-specific prerequisite error.
@@ -76,7 +77,7 @@ audio -> detector -> transcript -> structured intent model JSON -> Go validation
 ## Testing and verification
 
 - Pure Go tests run on desktop platforms.
-- Temporary-directory tests cover model discovery, checksum validation, reload, and preservation of a prior valid role.
+- Temporary-directory tests cover sherpa profile discovery, checksum validation, flat intent-GGUF path validation, reload, and preservation of a prior valid sherpa role.
 - API tests cover GET-triggered reload, auth boundaries, redaction, OpenAPI response, and failed reload behavior.
 - Runtime swap concurrency test covers old/new complete-runtime visibility.
 - Existing coordinator fake-component tests remain the behavior gate.
