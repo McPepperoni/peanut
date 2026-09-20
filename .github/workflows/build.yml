@@ -26,6 +26,7 @@ jobs:
           submodules: recursive
       - name: Verify llama.cpp pin
         shell: bash
+        working-directory: .
         run: test "$(git -C third-party/llama.cpp rev-parse HEAD)" = "a894dae939d426954ce54bb604824f1ae918a0c5"
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -50,6 +51,7 @@ jobs:
           submodules: recursive
       - name: Verify llama.cpp pin
         shell: bash
+        working-directory: .
         run: test "$(git -C third-party/llama.cpp rev-parse HEAD)" = "a894dae939d426954ce54bb604824f1ae918a0c5"
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -92,6 +94,7 @@ jobs:
           submodules: recursive
       - name: Verify llama.cpp pin
         shell: bash
+        working-directory: .
         run: test "$(git -C third-party/llama.cpp rev-parse HEAD)" = "a894dae939d426954ce54bb604824f1ae918a0c5"
       - name: Set up Go
         uses: actions/setup-go@v7
