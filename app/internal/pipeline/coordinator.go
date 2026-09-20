@@ -60,6 +60,10 @@ func (c *Coordinator) Run(ctx context.Context) (err error) {
 	c.logger.Info("pipeline.start", "component", "pipeline", "status", "started")
 	defer func() {
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				c.logger.Info("pipeline.stop", "component", "pipeline", "status", "stopped")
+				return
+			}
 			c.logger.Error("pipeline.stop", "component", "pipeline", "status", "failed", "error_type", "operation_failed")
 			return
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -44,9 +45,11 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 	if err := db.Migrate(ctx); err != nil {
 		return err
 	}
+	dependencies.Logger.Info("database.migrate", "component", "database", "status", "succeeded")
 	if err := config.PersistDefaults(ctx, db); err != nil {
 		return err
 	}
+	dependencies.Logger.Info("database.defaults", "component", "database", "status", "succeeded")
 	if len(args) > 1 && args[1] == "api" {
 		return serveAPIWithLogger(ctx, db, dependencies.Logger)
 	}
@@ -76,8 +79,9 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 			return err
 		}
 		defer func() {
-			_ = closeRuntimeResources(commandRuntime.capture, commandRuntime.player)
-			_ = commandRuntime.modelSet.Close()
+			if cleanupErr := errors.Join(closeRuntimeResources(commandRuntime.capture, commandRuntime.player), commandRuntime.modelSet.Close()); cleanupErr != nil {
+				dependencies.Logger.Error("runtime.cleanup", "component", "runtime", "status", "failed", "error_type", "operation_failed")
+			}
 		}()
 		configured := commandRuntime.commandDependencies(ctx)
 		configured.Logger = dependencies.Logger
@@ -97,7 +101,13 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 			dependencies.Enroll = configured.Enroll
 		}
 	}
-	return dispatch(ctx, args, dependencies, output)
+	err = dispatch(ctx, args, dependencies, output)
+	if err != nil {
+		dependencies.Logger.Error("dispatch.complete", "component", "dispatch", "status", "failed", "error_type", "operation_failed")
+		return err
+	}
+	dependencies.Logger.Info("dispatch.complete", "component", "dispatch", "status", "succeeded")
+	return nil
 }
 
 func needsCommandRuntime(command string, dependencies commandDependencies) bool {
@@ -119,9 +129,14 @@ func serveAPI(ctx context.Context, db *sqlite.DB) error {
 	return serveAPIWithLogger(ctx, db, logging.Nop())
 }
 
-func serveAPIWithLogger(ctx context.Context, db *sqlite.DB, logger *slog.Logger) error {
+func serveAPIWithLogger(ctx context.Context, db *sqlite.DB, logger *slog.Logger) (err error) {
 	logger = logging.Normalize(logger)
 	logger.Info("api.start", "component", "api", "status", "starting")
+	defer func() {
+		if err != nil {
+			logger.Error("api.stop", "component", "api", "status", "failed", "error_type", "operation_failed")
+		}
+	}()
 	provider := providers.NewHomeAssistantProvider(db, nil)
 	var cfg config.Config
 	if err := sqlite.NewConfigStore(db).Load(ctx, &cfg); err != nil {
@@ -139,7 +154,6 @@ func serveAPIWithLogger(ctx context.Context, db *sqlite.DB, logger *slog.Logger)
 		return shutdownHTTPServer(httpServer, gracefulHTTPShutdownTimeout)
 	})
 	if err != nil {
-		logger.Error("api.stop", "component", "api", "status", "failed", "error_type", "operation_failed")
 		return err
 	}
 	logger.Info("api.stop", "component", "api", "status", "stopped")

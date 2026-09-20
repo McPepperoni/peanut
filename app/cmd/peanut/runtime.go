@@ -74,7 +74,9 @@ func (r *reloadableModels) Swap(ctx context.Context, snapshot models.Snapshot) e
 	previous := r.current
 	r.current = next
 	r.mu.Unlock()
-	_ = closeModelSet(previous)
+	if closeErr := closeModelSet(previous); closeErr != nil {
+		r.logger.Error("model.cleanup", "component", "model", "status", "failed", "error_type", "operation_failed")
+	}
 	r.logger.Info("model.reload", "component", "model", "status", "succeeded")
 	return nil
 }
@@ -217,6 +219,11 @@ func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err e
 func runConfiguredWithLogger(ctx context.Context, cfg config.Config, db *sqlite.DB, logger *slog.Logger) (err error) {
 	logger = logging.Normalize(logger)
 	logger.Info("runtime.start", "component", "runtime", "status", "starting")
+	defer func() {
+		if err != nil {
+			logger.Error("runtime.stop", "component", "runtime", "status", "failed", "error_type", "operation_failed")
+		}
+	}()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	runtime, err := newConfiguredRuntimeWithLogger(runCtx, cfg, db, logger)
@@ -244,7 +251,6 @@ func runConfiguredWithLogger(ctx context.Context, cfg config.Config, db *sqlite.
 		func() error { return shutdownHTTPServer(httpServer, gracefulHTTPShutdownTimeout) },
 	)
 	if err != nil {
-		logger.Error("runtime.stop", "component", "runtime", "status", "failed", "error_type", "operation_failed")
 		return err
 	}
 	logger.Info("runtime.stop", "component", "runtime", "status", "stopped")
@@ -565,6 +571,10 @@ func buildModelSetWithLogger(cfg config.Config, logger *slog.Logger, roles ...mo
 		if err != nil {
 			status = "failed"
 			level = slog.LevelError
+		}
+		if err != nil {
+			logger.LogAttrs(ctx, slog.LevelError, "model.load", slog.String("component", "model"), slog.String("role", "batch"), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()), slog.String("error_type", "operation_failed"))
+			return set, err
 		}
 		for _, role := range roles {
 			logger.LogAttrs(ctx, level, "model.load", slog.String("component", "model"), slog.String("role", string(role)), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()))
