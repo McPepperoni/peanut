@@ -481,7 +481,7 @@ func newRuntimeModelRegistry(cfg config.Config, db *sqlite.DB, owner *reloadable
 }
 
 func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
-	return func(_ context.Context, snapshot models.Snapshot) (modelSet, error) {
+	return func(ctx context.Context, snapshot models.Snapshot) (modelSet, error) {
 		required, err := requiredProfiles(cfg.Models.Root, snapshot, roles...)
 		if err != nil {
 			return modelSet{}, err
@@ -506,42 +506,55 @@ func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
 			manifest.Paths.TTS = modelDirectory(cfg.Models.Root, profile)
 		}
 		var intentExecutable string
+		var intentLoadStarted time.Time
 		if intentProfile, ok := required[models.RoleIntent]; ok {
+			intentLoadStarted = modelLoadStarted(ctx, models.RoleIntent)
 			intentExecutable, err = resolveIntentExecutable(intentProfile.Runtime)
 			if err != nil {
+				modelLoadFinished(ctx, models.RoleIntent, intentLoadStarted, err)
 				return modelSet{}, err
 			}
 		}
 		var set modelSet
 		if _, ok := required[models.RoleKWS]; ok {
+			started := modelLoadStarted(ctx, models.RoleKWS)
 			set.wake, err = sherpa.NewWakeDetector(manifest)
+			modelLoadFinished(ctx, models.RoleKWS, started, err)
 			if err != nil {
 				return modelSet{}, fmt.Errorf("create wake detector: %w", err)
 			}
 		}
 		if _, ok := required[models.RoleVAD]; ok {
+			started := modelLoadStarted(ctx, models.RoleVAD)
 			set.voice, err = sherpa.NewVAD(manifest, sherpa.WithVADThreshold(cfg.Audio.VADThreshold))
+			modelLoadFinished(ctx, models.RoleVAD, started, err)
 			if err != nil {
 				_ = closeModelSet(set)
 				return modelSet{}, fmt.Errorf("create VAD: %w", err)
 			}
 		}
 		if _, ok := required[models.RoleSTT]; ok {
+			started := modelLoadStarted(ctx, models.RoleSTT)
 			set.transcriber, err = sherpa.NewTranscriber(manifest)
+			modelLoadFinished(ctx, models.RoleSTT, started, err)
 			if err != nil {
 				_ = closeModelSet(set)
 				return modelSet{}, fmt.Errorf("create transcriber: %w", err)
 			}
 		}
 		if _, ok := required[models.RoleSpeaker]; ok {
+			started := modelLoadStarted(ctx, models.RoleSpeaker)
 			set.speaker, err = sherpa.NewSpeakerIdentifier(manifest)
+			modelLoadFinished(ctx, models.RoleSpeaker, started, err)
 			if err != nil {
 				_ = closeModelSet(set)
 				return modelSet{}, fmt.Errorf("create speaker identifier: %w", err)
 			}
 		}
 		if _, ok := required[models.RoleTTS]; ok {
+			started := modelLoadStarted(ctx, models.RoleTTS)
 			set.synthesizer, err = sherpa.NewSynthesizer(manifest)
+			modelLoadFinished(ctx, models.RoleTTS, started, err)
 			if err != nil {
 				_ = closeModelSet(set)
 				return modelSet{}, fmt.Errorf("create synthesizer: %w", err)
@@ -549,38 +562,40 @@ func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
 		}
 		if intentProfile, ok := required[models.RoleIntent]; ok {
 			set.parser = intent.NewModelParser(intentExecutable, modelEntry(cfg.Models.Root, intentProfile), cfg.Models.Threads, cfg.HomeAssistant.Timeout)
+			modelLoadFinished(ctx, models.RoleIntent, intentLoadStarted, nil)
 		}
 		return set, nil
 	}
 }
 
+type modelLoadLoggerKey struct{}
+
 func buildModelSetWithLogger(cfg config.Config, logger *slog.Logger, roles ...models.Role) modelSetBuilder {
-	logger = logging.Normalize(logger)
 	base := buildModelSet(cfg, roles...)
-	if len(roles) == 0 {
-		roles = []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent}
-	}
 	return func(ctx context.Context, snapshot models.Snapshot) (modelSet, error) {
-		started := time.Now()
-		for _, role := range roles {
-			logger.Info("model.load", "component", "model", "role", string(role), "status", "started")
-		}
-		set, err := base(ctx, snapshot)
-		status := "succeeded"
-		level := slog.LevelInfo
-		if err != nil {
-			status = "failed"
-			level = slog.LevelError
-		}
-		if err != nil {
-			logger.LogAttrs(ctx, slog.LevelError, "model.load", slog.String("component", "model"), slog.String("role", "batch"), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()), slog.String("error_type", "operation_failed"))
-			return set, err
-		}
-		for _, role := range roles {
-			logger.LogAttrs(ctx, level, "model.load", slog.String("component", "model"), slog.String("role", string(role)), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()))
-		}
-		return set, err
+		return base(context.WithValue(ctx, modelLoadLoggerKey{}, logging.Normalize(logger)), snapshot)
 	}
+}
+
+func modelLoadLogger(ctx context.Context) *slog.Logger {
+	logger, _ := ctx.Value(modelLoadLoggerKey{}).(*slog.Logger)
+	return logging.Normalize(logger)
+}
+
+func modelLoadStarted(ctx context.Context, role models.Role) time.Time {
+	started := time.Now()
+	modelLoadLogger(ctx).Info("model.load", "component", "model", "role", string(role), "status", "started")
+	return started
+}
+
+func modelLoadFinished(ctx context.Context, role models.Role, started time.Time, err error) {
+	status := "succeeded"
+	level := slog.LevelInfo
+	if err != nil {
+		status = "failed"
+		level = slog.LevelError
+	}
+	modelLoadLogger(ctx).LogAttrs(ctx, level, "model.load", slog.String("component", "model"), slog.String("role", string(role)), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()))
 }
 
 func intentExecutableName(runtimeName string) (string, error) {

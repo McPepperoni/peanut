@@ -33,9 +33,14 @@ func terminationSignals() []os.Signal {
 	return []os.Signal{os.Interrupt, syscall.SIGTERM}
 }
 
-func runMain(ctx context.Context, args []string, databasePath string, dependencies commandDependencies, output io.Writer) error {
+func runMain(ctx context.Context, args []string, databasePath string, dependencies commandDependencies, output io.Writer) (err error) {
 	dependencies.Logger = logging.Normalize(dependencies.Logger)
 	dependencies.Logger.Info("process.start", "component", "process", "status", "started")
+	defer func() {
+		if err != nil {
+			dependencies.Logger.Error("process.stop", "component", "process", "status", "failed", "error_type", "operation_failed")
+		}
+	}()
 	db, err := sqlite.Open(ctx, databasePath)
 	if err != nil {
 		return err
