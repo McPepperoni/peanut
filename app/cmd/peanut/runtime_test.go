@@ -210,20 +210,20 @@ func (r *runtimeTestResource) Close() error {
 
 func TestRuntimeRegistryReloadInvokesLiveSwapBoundary(t *testing.T) {
 	root := t.TempDir()
-	directory := filepath.Join(root, "intent", "local")
+	directory := filepath.Join(root, "stt", "local")
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(directory, "model.gguf"), []byte("model"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "model.json"), []byte(`{"id":"intent-live","role":"intent","runtime":"local","entry":"model.gguf"}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "model.json"), []byte(`{"id":"stt-live","role":"stt","runtime":"local","entry":"model.gguf"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	swaps := 0
 	live := newReloadableModels(func(_ context.Context, snapshot models.Snapshot) (modelSet, error) {
 		swaps++
-		return modelSet{parser: runtimeTestParser{language: snapshot.Active[models.RoleIntent].ID}}, nil
+		return modelSet{parser: runtimeTestParser{language: snapshot.Active[models.RoleSTT].ID}}, nil
 	})
 	registry := models.NewRegistry(root, nil, live.Swap)
 
@@ -234,7 +234,7 @@ func TestRuntimeRegistryReloadInvokesLiveSwapBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if swaps != 1 || plan.Language != "intent-live" {
+	if swaps != 1 || plan.Language != "stt-live" {
 		t.Fatalf("swaps = %d, delegated language = %q", swaps, plan.Language)
 	}
 }

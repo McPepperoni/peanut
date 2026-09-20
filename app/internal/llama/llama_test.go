@@ -40,3 +40,26 @@ func TestNativeGenerateClearsContextMemoryBeforeTokenization(t *testing.T) {
 		t.Fatalf("context memory clear must precede tokenization: clear=%d tokenize=%d", clearAt, tokenizeAt)
 	}
 }
+
+func TestNativeGenerateAppliesModelChatTemplateBeforeTokenization(t *testing.T) {
+	source, err := os.ReadFile("native.cpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	chatTemplateAt := strings.Index(text, "llama_model_chat_template")
+	applyAt := strings.Index(text, "llama_chat_apply_template")
+	tokenizeAt := strings.Index(text, "llama_tokenize(")
+	if chatTemplateAt < 0 || applyAt < 0 {
+		t.Fatal("native generation must apply the model chat template")
+	}
+	if tokenizeAt < 0 || applyAt > tokenizeAt {
+		t.Fatalf("chat template must be applied before tokenization: apply=%d tokenize=%d", applyAt, tokenizeAt)
+	}
+	if !strings.Contains(text[:tokenizeAt], "const struct llama_chat_message message = { \"user\", prompt };") {
+		t.Fatal("chat template must receive one user message")
+	}
+	if !strings.Contains(text[applyAt:tokenizeAt], ", 1, true,") {
+		t.Fatal("chat template must add the assistant generation prompt")
+	}
+}

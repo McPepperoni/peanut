@@ -189,6 +189,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "model reload failed")
 		return
 	}
+	snapshot = publicModelSnapshot(snapshot)
 	errors := make([]string, 0)
 	for _, profile := range snapshot.Profiles {
 		if profile.Error != "" {
@@ -200,6 +201,24 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		Active   map[models.Role]models.Profile `json:"active"`
 		Errors   []string                       `json:"errors"`
 	}{snapshot.Profiles, snapshot.Active, errors})
+}
+
+func publicModelSnapshot(snapshot models.Snapshot) models.Snapshot {
+	profiles := make([]models.Profile, 0, len(snapshot.Profiles))
+	for _, profile := range snapshot.Profiles {
+		if profile.Role != models.RoleIntent {
+			profiles = append(profiles, profile)
+		}
+	}
+	active := make(map[models.Role]models.Profile, len(snapshot.Active))
+	for role, profile := range snapshot.Active {
+		if role != models.RoleIntent {
+			active[role] = profile
+		}
+	}
+	snapshot.Profiles = profiles
+	snapshot.Active = active
+	return snapshot
 }
 
 func serveEmbedded(contentType string, content []byte) http.HandlerFunc {

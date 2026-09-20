@@ -125,6 +125,8 @@ func nativeError(status C.peanut_llama_status) error {
 		return ErrNativeLoad
 	case C.PEANUT_LLAMA_CONTEXT_FAILED:
 		return ErrNativeContext
+	case C.PEANUT_LLAMA_CHAT_TEMPLATE_FAILED:
+		return ErrNativeChatTemplate
 	case C.PEANUT_LLAMA_GRAMMAR_FAILED:
 		return ErrNativeGrammar
 	case C.PEANUT_LLAMA_TOKENIZE_FAILED:

@@ -407,11 +407,11 @@ func TestModelsGETReloadsAndReturnsSnapshot(t *testing.T) {
 	db := apiDB(t)
 	reloader := &fakeModelReloader{snapshot: models.Snapshot{
 		Profiles: []models.Profile{
-			{ID: "intent-local", Role: models.RoleIntent, Valid: true},
+			{ID: "stt-local", Role: models.RoleSTT, Valid: true},
 			{ID: "invalid:stt/bad", Role: models.RoleSTT, Error: "entry missing"},
 		},
 		Active: map[models.Role]models.Profile{
-			models.RoleIntent: {ID: "intent-local", Role: models.RoleIntent, Valid: true},
+			models.RoleSTT: {ID: "stt-local", Role: models.RoleSTT, Valid: true},
 		},
 	}}
 
@@ -430,7 +430,7 @@ func TestModelsGETReloadsAndReturnsSnapshot(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Profiles) != 2 || body.Active[models.RoleIntent].ID != "intent-local" {
+	if len(body.Profiles) != 2 || body.Active[models.RoleSTT].ID != "stt-local" {
 		t.Fatalf("snapshot = %+v", body)
 	}
 	if len(body.Errors) != 1 || body.Errors[0] != "entry missing" {
@@ -443,7 +443,7 @@ func TestModelsGETKeepsPreviousSnapshotOnReloadError(t *testing.T) {
 	reloader := &fakeModelReloader{
 		err: errors.New("bad model"),
 		active: map[models.Role]models.Profile{
-			models.RoleIntent: {ID: "intent-old", Role: models.RoleIntent, Valid: true},
+			models.RoleSTT: {ID: "stt-old", Role: models.RoleSTT, Valid: true},
 		},
 	}
 
@@ -451,8 +451,40 @@ func TestModelsGETKeepsPreviousSnapshotOnReloadError(t *testing.T) {
 	if response.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if _, ok := reloader.Active(models.RoleIntent); !ok {
+	if _, ok := reloader.Active(models.RoleSTT); !ok {
 		t.Fatal("active role was erased")
+	}
+}
+
+func TestModelsGETHidesFlatIntentProfiles(t *testing.T) {
+	db := apiDB(t)
+	reloader := &fakeModelReloader{snapshot: models.Snapshot{
+		Profiles: []models.Profile{
+			{ID: "intent-stale", Role: models.RoleIntent, Valid: true},
+			{ID: "stt-live", Role: models.RoleSTT, Valid: true},
+		},
+		Active: map[models.Role]models.Profile{
+			models.RoleIntent: {ID: "intent-stale", Role: models.RoleIntent, Valid: true},
+			models.RoleSTT:    {ID: "stt-live", Role: models.RoleSTT, Valid: true},
+		},
+	}}
+
+	response := request(t, NewServer(db, nil, reloader).Handler(), http.MethodGet, "/api/v1/models", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Profiles []models.Profile               `json:"profiles"`
+		Active   map[models.Role]models.Profile `json:"active"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Profiles) != 1 || body.Profiles[0].Role == models.RoleIntent {
+		t.Fatalf("profiles = %#v", body.Profiles)
+	}
+	if _, ok := body.Active[models.RoleIntent]; ok {
+		t.Fatalf("stale intent active = %#v", body.Active[models.RoleIntent])
 	}
 }
 

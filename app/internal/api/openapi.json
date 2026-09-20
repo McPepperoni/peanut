@@ -44,7 +44,7 @@
         "required": ["id", "role", "runtime", "path", "entry", "sha256", "threads", "valid", "error"],
         "properties": {
           "id": { "type": "string" },
-          "role": { "type": "string", "enum": ["kws", "vad", "stt", "speaker", "tts", "intent"] },
+          "role": { "type": "string", "enum": ["kws", "vad", "stt", "speaker", "tts"] },
           "runtime": { "type": "string" },
           "path": { "type": "string" },
           "entry": { "type": "string" },

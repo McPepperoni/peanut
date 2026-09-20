@@ -8,15 +8,16 @@ import (
 )
 
 var (
-	ErrUnavailable    = errors.New("llama unavailable")
-	ErrInvalidRequest = errors.New("invalid llama request")
-	ErrNativeLoad     = errors.New("llama model load failed")
-	ErrNativeContext  = errors.New("llama context creation failed")
-	ErrNativeGrammar  = errors.New("llama grammar creation failed")
-	ErrNativeTokenize = errors.New("llama prompt tokenization failed")
-	ErrNativeDecode   = errors.New("llama decode failed")
-	ErrNativeOutput   = errors.New("llama output failed")
-	ErrCancelled      = errors.New("llama generation cancelled")
+	ErrUnavailable        = errors.New("llama unavailable")
+	ErrInvalidRequest     = errors.New("invalid llama request")
+	ErrNativeLoad         = errors.New("llama model load failed")
+	ErrNativeContext      = errors.New("llama context creation failed")
+	ErrNativeChatTemplate = errors.New("llama chat template application failed")
+	ErrNativeGrammar      = errors.New("llama grammar creation failed")
+	ErrNativeTokenize     = errors.New("llama prompt tokenization failed")
+	ErrNativeDecode       = errors.New("llama decode failed")
+	ErrNativeOutput       = errors.New("llama output failed")
+	ErrCancelled          = errors.New("llama generation cancelled")
 )
 
 const maxTokens = 4096

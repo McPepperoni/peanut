@@ -19,13 +19,13 @@ import (
 
 func TestModelCommandsUseModelsRoot(t *testing.T) {
 	root := t.TempDir()
-	writeValidIntentManifest(t, root)
+	writeValidSherpaManifest(t, root)
 	var output bytes.Buffer
 	deps := commandDependencies{ModelRoot: root}
 	if err := dispatch(context.Background(), []string{"model", "list"}, deps, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "intent-local") {
+	if !strings.Contains(output.String(), "stt-local") {
 		t.Fatalf("output = %q", output.String())
 	}
 }
@@ -140,16 +140,16 @@ func writeTestWAV(t *testing.T) string {
 	return path
 }
 
-func writeValidIntentManifest(t *testing.T, root string) {
+func writeValidSherpaManifest(t *testing.T, root string) {
 	t.Helper()
-	directory := filepath.Join(root, "intent", "local")
+	directory := filepath.Join(root, "stt", "local")
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(directory, "model.gguf"), []byte("model"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "model.json"), []byte(`{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf"}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "model.json"), []byte(`{"id":"stt-local","role":"stt","runtime":"local","entry":"model.gguf"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 }

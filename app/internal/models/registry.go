@@ -90,10 +90,12 @@ func (r *Registry) Scan(ctx context.Context) (Snapshot, error) {
 		if err != nil {
 			return Snapshot{}, fmt.Errorf("load stored model snapshot: %w", err)
 		}
+		previous = registryProfiles(previous)
 	}
 	r.mu.RLock()
 	active := cloneActive(r.active)
 	r.mu.RUnlock()
+	delete(active, RoleIntent)
 	normalizeProfiles(profiles, active)
 	selected := selectProfiles(profiles)
 	for role, profile := range selected {
@@ -137,7 +139,7 @@ func scan(root string) ([]Profile, error) {
 	}
 	var profiles []Profile
 	for _, roleDirectory := range roles {
-		if !roleDirectory.IsDir() {
+		if !roleDirectory.IsDir() || roleDirectory.Name() == string(RoleIntent) {
 			continue
 		}
 		rolePath := filepath.Join(root, roleDirectory.Name())
@@ -154,7 +156,10 @@ func scan(root string) ([]Profile, error) {
 			if _, err := os.Stat(manifestPath); errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			profiles = append(profiles, readProfile(root, roleDirectory.Name(), profilePath, manifestPath))
+			profile := readProfile(root, roleDirectory.Name(), profilePath, manifestPath)
+			if profile.Role != RoleIntent {
+				profiles = append(profiles, profile)
+			}
 		}
 	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Path < profiles[j].Path })
@@ -240,7 +245,7 @@ func persistedProfiles(profiles []Profile, active map[Role]Profile) []Profile {
 		persisted[i].Active = false
 		byID[persisted[i].ID] = i
 	}
-	for _, role := range []Role{RoleKWS, RoleVAD, RoleSTT, RoleSpeaker, RoleTTS, RoleIntent} {
+	for _, role := range []Role{RoleKWS, RoleVAD, RoleSTT, RoleSpeaker, RoleTTS} {
 		profile, ok := active[role]
 		if !ok {
 			continue
@@ -371,11 +376,21 @@ func pathContained(parent, child string) (bool, error) {
 
 func validRole(role Role) bool {
 	switch role {
-	case RoleKWS, RoleVAD, RoleSTT, RoleSpeaker, RoleTTS, RoleIntent:
+	case RoleKWS, RoleVAD, RoleSTT, RoleSpeaker, RoleTTS:
 		return true
 	default:
 		return false
 	}
+}
+
+func registryProfiles(profiles []Profile) []Profile {
+	filtered := profiles[:0]
+	for _, profile := range profiles {
+		if profile.Role != RoleIntent {
+			filtered = append(filtered, profile)
+		}
+	}
+	return filtered
 }
 
 func cloneActive(active map[Role]Profile) map[Role]Profile {

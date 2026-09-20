@@ -20,7 +20,7 @@ func TestModelStoreReplacesAndListsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewModelStore(db)
-	profiles := []models.Profile{{ID: "intent-local", Role: models.RoleIntent, Runtime: "local", Path: "intent/local", Entry: "model.gguf", Threads: 4, Valid: true}}
+	profiles := []models.Profile{{ID: "stt-local", Role: models.RoleSTT, Runtime: "local", Path: "stt/local", Entry: "model.gguf", Threads: 4, Valid: true}}
 	if err := store.ReplaceSnapshot(ctx, profiles); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestModelStoreRejectsAbsolutePaths(t *testing.T) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	profile := models.Profile{ID: "intent-local", Role: models.RoleIntent, Runtime: "local", Path: filepath.Join(t.TempDir(), "intent", "local"), Entry: "model.gguf", Valid: true}
+	profile := models.Profile{ID: "stt-local", Role: models.RoleSTT, Runtime: "local", Path: filepath.Join(t.TempDir(), "stt", "local"), Entry: "model.gguf", Valid: true}
 	if err := NewModelStore(db).ReplaceSnapshot(ctx, []models.Profile{profile}); err == nil {
 		t.Fatal("absolute model path was stored")
 	}
@@ -62,7 +62,7 @@ func TestModelStoreRejectsUnsafeEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range []string{filepath.Join(t.TempDir(), "model.gguf"), "../model.gguf"} {
-		profile := models.Profile{ID: "intent-local", Role: models.RoleIntent, Runtime: "local", Path: "intent/local", Entry: entry, Valid: true}
+		profile := models.Profile{ID: "stt-local", Role: models.RoleSTT, Runtime: "local", Path: "stt/local", Entry: entry, Valid: true}
 		if err := NewModelStore(db).ReplaceSnapshot(ctx, []models.Profile{profile}); err == nil {
 			t.Errorf("unsafe entry %q was stored", entry)
 		}
@@ -80,26 +80,26 @@ func TestFreshRegistryRejectsPersistedActiveRoleOnInvalidReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	writeManifest(t, root, `{"id":"intent-local","role":"intent","runtime":"local","entry":"model.gguf"}`)
+	writeManifest(t, root, `{"id":"stt-local","role":"stt","runtime":"local","entry":"model.gguf"}`)
 	store := NewModelStore(db)
 	if _, err := models.NewRegistry(root, store, nil).Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
-	writeManifest(t, root, `{"id":"intent-local","role":"intent","runtime":"local","entry":"missing.gguf"}`)
+	writeManifest(t, root, `{"id":"stt-local","role":"stt","runtime":"local","entry":"missing.gguf"}`)
 
 	registry := models.NewRegistry(root, store, nil)
 	snapshot, err := registry.Scan(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := snapshot.Active[models.RoleIntent]; ok {
+	if _, ok := snapshot.Active[models.RoleSTT]; ok {
 		t.Fatalf("snapshot active = %#v", snapshot.Active)
 	}
-	if active, ok := registry.Active(models.RoleIntent); ok {
+	if active, ok := registry.Active(models.RoleSTT); ok {
 		t.Fatalf("registry active = %#v", active)
 	}
 	var activeCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM models WHERE role = 'intent' AND active = 1`).Scan(&activeCount); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM models WHERE role = 'stt' AND active = 1`).Scan(&activeCount); err != nil {
 		t.Fatal(err)
 	}
 	if activeCount != 0 {
@@ -125,7 +125,7 @@ func TestRegistryPersistsUnsafeInvalidEntryAsDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	writeManifest(t, root, `{"id":"intent-bad","role":"intent","runtime":"local","entry":"../../secret.gguf"}`)
+	writeManifest(t, root, `{"id":"stt-bad","role":"stt","runtime":"local","entry":"../../secret.gguf"}`)
 	store := NewModelStore(db)
 
 	snapshot, err := models.NewRegistry(root, store, nil).Scan(ctx)
@@ -146,7 +146,7 @@ func TestRegistryPersistsUnsafeInvalidEntryAsDiagnostic(t *testing.T) {
 
 func writeManifest(t *testing.T, root, manifest string) {
 	t.Helper()
-	directory := filepath.Join(root, "intent", "local")
+	directory := filepath.Join(root, "stt", "local")
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		t.Fatal(err)
 	}

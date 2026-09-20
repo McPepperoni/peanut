@@ -59,14 +59,14 @@ func TestModelsAPIUsesDiscoveryWithoutRuntimeConstruction(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	profileDir := filepath.Join(root, "intent", "local")
+	profileDir := filepath.Join(root, "stt", "local")
 	if err := os.MkdirAll(profileDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(profileDir, "model.gguf"), []byte("model"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	manifest := map[string]any{"id": "intent-live", "role": "intent", "runtime": "local", "entry": "model.gguf"}
+	manifest := map[string]any{"id": "stt-live", "role": "stt", "runtime": "local", "entry": "model.gguf"}
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestModelsAPIUsesDiscoveryWithoutRuntimeConstruction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stored) != 1 || stored[0].ID != "intent-live" {
+	if len(stored) != 1 || stored[0].ID != "stt-live" {
 		t.Fatalf("stored models = %#v", stored)
 	}
 }

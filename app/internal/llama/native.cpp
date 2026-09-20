@@ -67,6 +67,29 @@ static bool peanut_schema_to_grammar(const char *schema, std::string *grammar) {
 	}
 }
 
+static peanut_llama_status peanut_apply_chat_template(
+	const struct llama_model *model,
+	const char *prompt,
+	std::string *formatted) {
+	const char *template_source = llama_model_chat_template(model, NULL);
+	if (template_source == NULL || template_source[0] == '\0') {
+		return PEANUT_LLAMA_CHAT_TEMPLATE_FAILED;
+	}
+	const struct llama_chat_message message = { "user", prompt };
+	int32_t required = llama_chat_apply_template(template_source, &message, 1, true, NULL, 0);
+	if (required < 0) {
+		return PEANUT_LLAMA_CHAT_TEMPLATE_FAILED;
+	}
+	std::string buffer((size_t) required + 1, '\0');
+	int32_t written = llama_chat_apply_template(
+		template_source, &message, 1, true, buffer.data(), required);
+	if (written < 0 || written > required) {
+		return PEANUT_LLAMA_CHAT_TEMPLATE_FAILED;
+	}
+	formatted->assign(buffer.data(), (size_t) written);
+	return PEANUT_LLAMA_OK;
+}
+
 peanut_llama_status peanut_llama_open(const char *model_path, int32_t threads, peanut_llama **out) {
 	if (model_path == NULL || model_path[0] == '\0' || threads <= 0 || out == NULL) {
 		return PEANUT_LLAMA_INVALID;
@@ -174,7 +197,12 @@ peanut_llama_status peanut_llama_generate(
 	llama_memory_clear(llama_get_memory(engine->context), true);
 
 	const struct llama_vocab *vocab = llama_model_get_vocab(engine->model);
-	int32_t prompt_tokens_len = llama_tokenize(vocab, prompt, (int32_t) strlen(prompt), NULL, 0, true, true);
+	std::string formatted_prompt;
+	peanut_llama_status template_status = peanut_apply_chat_template(engine->model, prompt, &formatted_prompt);
+	if (template_status != PEANUT_LLAMA_OK) {
+		return template_status;
+	}
+	int32_t prompt_tokens_len = llama_tokenize(vocab, formatted_prompt.c_str(), (int32_t) formatted_prompt.size(), NULL, 0, true, true);
 	if (prompt_tokens_len >= 0) {
 		return PEANUT_LLAMA_TOKENIZE_FAILED;
 	}
@@ -183,7 +211,7 @@ peanut_llama_status peanut_llama_generate(
 	if (prompt_tokens == NULL) {
 		return PEANUT_LLAMA_TOKENIZE_FAILED;
 	}
-	if (llama_tokenize(vocab, prompt, (int32_t) strlen(prompt), prompt_tokens, prompt_tokens_len, true, true) < 0) {
+	if (llama_tokenize(vocab, formatted_prompt.c_str(), (int32_t) formatted_prompt.size(), prompt_tokens, prompt_tokens_len, true, true) < 0) {
 		free(prompt_tokens);
 		return PEANUT_LLAMA_TOKENIZE_FAILED;
 	}
