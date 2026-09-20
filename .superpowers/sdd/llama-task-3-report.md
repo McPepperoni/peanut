@@ -170,3 +170,19 @@ git diff --check
 The temporary ARM64 test binary was removed. Native archive linking was not
 run because this host has no built pinned llama.cpp archives; the updated
 build helper now produces and installs the required `llama-common` archive.
+
+## Task 3 test-gap follow-up
+
+Updated the invalid thread and max-token requests in
+`app/internal/llama/llama_test.go` to include `Prompt: "x"`, ensuring validation
+reaches the intended branches.
+
+Fresh verification:
+
+```text
+go test -count=1 ./internal/llama
+ok   peanut/internal/llama 0.347s
+
+go vet ./internal/llama
+passed
+```
