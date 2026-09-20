@@ -537,6 +537,7 @@ func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
 			set.wake, err = sherpa.NewWakeDetector(manifest)
 			modelLoadFinished(ctx, models.RoleKWS, started, err)
 			if err != nil {
+				_ = closeModelSet(set)
 				return modelSet{}, fmt.Errorf("create wake detector: %w", err)
 			}
 		}

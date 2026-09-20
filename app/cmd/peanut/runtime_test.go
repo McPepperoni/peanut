@@ -335,6 +335,40 @@ func TestRuntimeSwapClosesFailedNativeCandidate(t *testing.T) {
 	}
 }
 
+func TestRuntimeSwapClosesNativeCandidateWhenKWSConstructionFails(t *testing.T) {
+	root := t.TempDir()
+	modelPath := filepath.Join(root, "functiongemma.gguf")
+	if err := os.WriteFile(modelPath, []byte("model"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Models: config.Models{Root: root, IntentModel: "functiongemma.gguf", Threads: 1}, HomeAssistant: config.HomeAssistant{Timeout: time.Second}}
+	candidate := &runtimeTestEngine{}
+	previousOpen := openLlama
+	defer func() { openLlama = previousOpen }()
+	openLlama = func(context.Context, string, int) (llama.Engine, error) { return candidate, nil }
+	live := newReloadableModels(buildModelSet(cfg, models.RoleIntent, models.RoleKWS))
+	previous := &runtimeTestEngine{output: []byte(`{"version":1,"status":"unknown","language":"old","steps":[],"clarification":"","confidence":0.5}`)}
+	live.current = modelSet{parser: intent.NewNativeParser(previous, 1, time.Second)}
+	defer live.Close()
+
+	err := live.Swap(context.Background(), models.Snapshot{Active: map[models.Role]models.Profile{
+		models.RoleKWS: {Role: models.RoleKWS, Path: "kws", Entry: "model.onnx", Valid: true},
+	}})
+	if err == nil {
+		t.Fatal("accepted failed replacement")
+	}
+	if candidate.closed != 1 {
+		t.Fatalf("candidate close count = %d, want 1", candidate.closed)
+	}
+	if previous.closed != 0 {
+		t.Fatalf("previous close count = %d, want 0", previous.closed)
+	}
+	plan, parseErr := live.Parse(context.Background(), "test", intent.CapabilitySnapshot{})
+	if parseErr != nil || plan.Language != "old" {
+		t.Fatalf("previous parser not preserved: plan = %#v, error = %v", plan, parseErr)
+	}
+}
+
 type runtimeTestEngine struct {
 	output []byte
 	closed int

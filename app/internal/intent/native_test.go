@@ -3,6 +3,7 @@ package intent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +49,34 @@ func TestNativeParserUsesSchemaAndValidatesPlan(t *testing.T) {
 	}
 	if engine.request.Threads != 2 || engine.request.MaxTokens != 512 {
 		t.Fatalf("request = %+v", engine.request)
+	}
+}
+
+func TestNativeParserExtractsJSONPlanFromModelOutput(t *testing.T) {
+	parser := NewNativeParser(&fakeEngine{output: []byte("model output:\n```json\n" + validPlanJSON + "\n```\n")}, 1, time.Second)
+	plan, err := parser.Parse(context.Background(), "play jazz", demoSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Status != StatusExecute || len(plan.Steps) != 1 {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
+func TestNativeParserRejectsMalformedOrSchemaInvalidOutput(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		output string
+	}{
+		{name: "malformed JSON", output: "```json\n{not json}\n```"},
+		{name: "unknown field", output: strings.TrimSuffix(validPlanJSON, "}") + `,"unexpected":true}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parser := NewNativeParser(&fakeEngine{output: []byte(test.output)}, 1, time.Second)
+			if _, err := parser.Parse(context.Background(), "play jazz", demoSnapshot()); err == nil || !strings.Contains(err.Error(), "parse intent model JSON") {
+				t.Fatalf("error = %v, want JSON validation error", err)
+			}
+		})
 	}
 }
 
