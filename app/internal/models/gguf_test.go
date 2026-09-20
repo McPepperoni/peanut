@@ -16,8 +16,12 @@ func TestResolveGGUFPathAcceptsFlatModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != path {
-		t.Fatalf("path = %q, want %q", got, path)
+	want, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
 

@@ -262,8 +262,12 @@ func TestBuildModelSetUsesFlatIntentModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != modelPath {
-		t.Fatalf("model path = %q, want %q", gotPath, modelPath)
+	wantPath, err := filepath.EvalSymlinks(modelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != wantPath {
+		t.Fatalf("model path = %q, want %q", gotPath, wantPath)
 	}
 	if _, ok := set.parser.(*intent.NativeParser); !ok {
 		t.Fatalf("parser = %T, want native parser", set.parser)
