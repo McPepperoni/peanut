@@ -24,6 +24,13 @@ func TestRequestRejectsInvalidLimits(t *testing.T) {
 	}
 }
 
+func TestValidateContextBudgetRejectsOverContextRequest(t *testing.T) {
+	err := validateContextBudget(3585, 512, contextSize)
+	if err == nil || !errors.Is(err, ErrContextExceeded) || !strings.Contains(err.Error(), "prompt tokens (3585) + max tokens (512) exceed context size (4096)") {
+		t.Fatalf("error = %v, want over-context validation error", err)
+	}
+}
+
 func TestNativeGenerateClearsContextMemoryBeforeTokenization(t *testing.T) {
 	source, err := os.ReadFile("native.cpp")
 	if err != nil {

@@ -215,6 +215,10 @@ peanut_llama_status peanut_llama_generate(
 		free(prompt_tokens);
 		return PEANUT_LLAMA_TOKENIZE_FAILED;
 	}
+	if (prompt_tokens_len > PEANUT_LLAMA_CONTEXT_SIZE - max_tokens) {
+		free(prompt_tokens);
+		return PEANUT_LLAMA_CONTEXT_EXCEEDED;
+	}
 
 	std::string grammar;
 	if (!peanut_schema_to_grammar(schema, &grammar)) {
