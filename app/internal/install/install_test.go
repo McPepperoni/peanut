@@ -2,9 +2,38 @@ package install
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLlamaSetupScripts(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"tools/setup-llama.sh", "tools/setup-llama.ps1"} {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if !strings.Contains(text, "git submodule update --init --recursive third-party/llama.cpp") {
+			t.Fatalf("%s does not initialize pinned submodule", path)
+		}
+		if strings.Contains(text, "--remote") || strings.Contains(text, "git pull") || strings.Contains(text, "curl") || strings.Contains(text, "wget") {
+			t.Fatalf("%s performs unpinned setup: %q", path, text)
+		}
+	}
+
+	gitmodules, err := os.ReadFile(filepath.Join(root, ".gitmodules"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitmodules), "third-party/llama.cpp") || !strings.Contains(string(gitmodules), "https://github.com/ggml-org/llama.cpp.git") {
+		t.Fatalf("unexpected .gitmodules: %q", gitmodules)
+	}
+}
 
 func TestProductionInstallersKeepHomeAssistantExternal(t *testing.T) {
 	for _, name := range []string{"install.sh", "install.ps1"} {

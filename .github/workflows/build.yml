@@ -22,6 +22,11 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Verify llama.cpp pin
+        shell: bash
+        run: test "$(git -C third-party/llama.cpp rev-parse HEAD)" = "a894dae939d426954ce54bb604824f1ae918a0c5"
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -41,6 +46,11 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Verify llama.cpp pin
+        shell: bash
+        run: test "$(git -C third-party/llama.cpp rev-parse HEAD)" = "a894dae939d426954ce54bb604824f1ae918a0c5"
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -53,3 +63,48 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: arm64
+
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+          - os: macos-14
+            goos: darwin
+            goarch: arm64
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Verify llama.cpp pin
+        shell: bash
+        run: test "$(git -C third-party/llama.cpp rev-parse HEAD)" = "a894dae939d426954ce54bb604824f1ae918a0c5"
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: app/go.mod
+          cache: true
+          cache-dependency-path: app/go.sum
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p ../build
+          go build -o "../build/peanut-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}" ./cmd/peanut
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
