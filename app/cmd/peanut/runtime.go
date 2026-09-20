@@ -7,9 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +18,7 @@ import (
 	"peanut/internal/audio/playback"
 	"peanut/internal/config"
 	"peanut/internal/intent"
+	"peanut/internal/llama"
 	"peanut/internal/logging"
 	"peanut/internal/ml"
 	"peanut/internal/ml/kws"
@@ -47,6 +46,8 @@ type modelSet struct {
 }
 
 type modelSetBuilder func(context.Context, models.Snapshot) (modelSet, error)
+
+var openLlama = llama.Open
 
 type reloadableModels struct {
 	mu      sync.RWMutex
@@ -505,17 +506,32 @@ func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
 		if profile, ok := required[models.RoleTTS]; ok {
 			manifest.Paths.TTS = modelDirectory(cfg.Models.Root, profile)
 		}
-		var intentExecutable string
-		var intentLoadStarted time.Time
-		if intentProfile, ok := required[models.RoleIntent]; ok {
-			intentLoadStarted = modelLoadStarted(ctx, models.RoleIntent)
-			intentExecutable, err = resolveIntentExecutable(intentProfile.Runtime)
-			if err != nil {
-				modelLoadFinished(ctx, models.RoleIntent, intentLoadStarted, err)
-				return modelSet{}, err
+		var set modelSet
+		intentRequested := len(roles) == 0
+		for _, role := range roles {
+			if role == models.RoleIntent {
+				intentRequested = true
+				break
 			}
 		}
-		var set modelSet
+		if intentRequested {
+			started := modelLoadStarted(ctx, models.RoleIntent)
+			modelPath, resolveErr := models.ResolveGGUFPath(cfg.Models.Root, cfg.Models.IntentModel)
+			if resolveErr != nil {
+				modelLoadFinished(ctx, models.RoleIntent, started, resolveErr)
+				return modelSet{}, fmt.Errorf("load intent model: resolve GGUF path: %w", resolveErr)
+			}
+			engine, openErr := openLlama(ctx, modelPath, cfg.Models.Threads)
+			if openErr != nil {
+				if engine != nil {
+					_ = engine.Close()
+				}
+				modelLoadFinished(ctx, models.RoleIntent, started, openErr)
+				return modelSet{}, fmt.Errorf("load intent model: open native engine: %w", openErr)
+			}
+			set.parser = intent.NewNativeParser(engine, cfg.Models.Threads, cfg.HomeAssistant.Timeout)
+			modelLoadFinished(ctx, models.RoleIntent, started, nil)
+		}
 		if _, ok := required[models.RoleKWS]; ok {
 			started := modelLoadStarted(ctx, models.RoleKWS)
 			set.wake, err = sherpa.NewWakeDetector(manifest)
@@ -560,10 +576,6 @@ func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
 				return modelSet{}, fmt.Errorf("create synthesizer: %w", err)
 			}
 		}
-		if intentProfile, ok := required[models.RoleIntent]; ok {
-			set.parser = intent.NewModelParser(intentExecutable, modelEntry(cfg.Models.Root, intentProfile), cfg.Models.Threads, cfg.HomeAssistant.Timeout)
-			modelLoadFinished(ctx, models.RoleIntent, intentLoadStarted, nil)
-		}
 		return set, nil
 	}
 }
@@ -598,36 +610,15 @@ func modelLoadFinished(ctx context.Context, role models.Role, started time.Time,
 	modelLoadLogger(ctx).LogAttrs(ctx, level, "model.load", slog.String("component", "model"), slog.String("role", string(role)), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()))
 }
 
-func intentExecutableName(runtimeName string) (string, error) {
-	switch runtimeName {
-	case "local", "llama.cpp", "llama-cli":
-		return "llama-cli", nil
-	default:
-		if filepath.IsAbs(runtimeName) || strings.ContainsAny(runtimeName, `/\\`) {
-			return runtimeName, nil
-		}
-		return "", fmt.Errorf("unsupported intent runtime %q", runtimeName)
-	}
-}
-
-func resolveIntentExecutable(runtimeName string) (string, error) {
-	executable, err := intentExecutableName(runtimeName)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := exec.LookPath(executable)
-	if err != nil {
-		return "", fmt.Errorf("resolve intent runtime %q: %w", runtimeName, err)
-	}
-	return resolved, nil
-}
-
 func requiredProfiles(root string, snapshot models.Snapshot, roles ...models.Role) (map[models.Role]models.Profile, error) {
 	if len(roles) == 0 {
-		roles = []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent}
+		roles = []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS}
 	}
 	required := make(map[models.Role]models.Profile, len(roles))
 	for _, role := range roles {
+		if role == models.RoleIntent {
+			continue
+		}
 		profile, ok := snapshot.Active[role]
 		if !ok {
 			path, detail := filepath.Join(root, string(role)), "missing"

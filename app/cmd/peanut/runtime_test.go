@@ -14,6 +14,7 @@ import (
 	"peanut/internal/audio"
 	"peanut/internal/config"
 	"peanut/internal/intent"
+	"peanut/internal/llama"
 	"peanut/internal/models"
 )
 
@@ -238,50 +239,114 @@ func TestRuntimeRegistryReloadInvokesLiveSwapBoundary(t *testing.T) {
 	}
 }
 
-func TestIntentRuntimeNamesResolveToLlamaCLI(t *testing.T) {
-	for _, runtimeName := range []string{"local", "llama.cpp", "llama-cli"} {
-		name, err := intentExecutableName(runtimeName)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name != "llama-cli" {
-			t.Errorf("runtime %q resolved to %q", runtimeName, name)
-		}
+func TestBuildModelSetUsesFlatIntentModel(t *testing.T) {
+	root := t.TempDir()
+	modelPath := filepath.Join(root, "functiongemma.gguf")
+	if err := os.WriteFile(modelPath, []byte("model"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := intentExecutableName("unsupported"); err == nil {
-		t.Fatal("unsupported intent runtime accepted")
+	cfg := config.Config{Models: config.Models{Root: root, IntentModel: "functiongemma.gguf", Threads: 2}, HomeAssistant: config.HomeAssistant{Timeout: time.Second}}
+	engine := &runtimeTestEngine{}
+	previous := openLlama
+	defer func() { openLlama = previous }()
+	var gotPath string
+	openLlama = func(_ context.Context, path string, threads int) (llama.Engine, error) {
+		gotPath = path
+		if threads != 2 {
+			t.Fatalf("threads = %d, want 2", threads)
+		}
+		return engine, nil
+	}
+
+	set, err := buildModelSet(cfg, models.RoleIntent)(context.Background(), models.Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != modelPath {
+		t.Fatalf("model path = %q, want %q", gotPath, modelPath)
+	}
+	if _, ok := set.parser.(*intent.NativeParser); !ok {
+		t.Fatalf("parser = %T, want native parser", set.parser)
+	}
+	if err := closeModelSet(set); err != nil {
+		t.Fatal(err)
+	}
+	if engine.closed != 1 {
+		t.Fatalf("engine close count = %d, want 1", engine.closed)
 	}
 }
 
-func TestRuntimeSwapRejectsMissingIntentExecutableBeforePublication(t *testing.T) {
+func TestRuntimeSwapRejectsNativeIntentOpenBeforePublication(t *testing.T) {
 	root := t.TempDir()
-	active := make(map[models.Role]models.Profile)
-	for _, role := range []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent} {
-		directory := filepath.Join(root, string(role), "local")
-		if err := os.MkdirAll(directory, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(directory, "model.bin"), []byte("model"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		active[role] = models.Profile{ID: string(role) + "-local", Role: role, Runtime: "local", Path: filepath.ToSlash(filepath.Join(string(role), "local")), Entry: "model.bin", Valid: true}
+	modelPath := filepath.Join(root, "functiongemma.gguf")
+	if err := os.WriteFile(modelPath, []byte("model"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	missingExecutable := filepath.Join(root, "missing-llama-cli")
-	intentProfile := active[models.RoleIntent]
-	intentProfile.Runtime = missingExecutable
-	active[models.RoleIntent] = intentProfile
-	cfg := config.Config{Models: config.Models{Root: root, Threads: 1, CPUOnly: true}, HomeAssistant: config.HomeAssistant{Timeout: time.Second}}
-	live := newReloadableModels(buildModelSet(cfg))
+	cfg := config.Config{Models: config.Models{Root: root, IntentModel: "functiongemma.gguf", Threads: 1}, HomeAssistant: config.HomeAssistant{Timeout: time.Second}}
+	previousOpen := openLlama
+	defer func() { openLlama = previousOpen }()
+	openLlama = func(context.Context, string, int) (llama.Engine, error) {
+		return nil, errors.New("native open failed")
+	}
+	live := newReloadableModels(buildModelSet(cfg, models.RoleIntent))
 	live.current = modelSet{parser: runtimeTestParser{language: "old"}}
 
-	err := live.Swap(context.Background(), models.Snapshot{Active: active})
-	if err == nil || !strings.Contains(err.Error(), "intent runtime") {
+	err := live.Swap(context.Background(), models.Snapshot{})
+	if err == nil || !strings.Contains(err.Error(), "load intent model") {
 		t.Fatalf("swap error = %v", err)
 	}
 	plan, parseErr := live.Parse(context.Background(), "test", intent.CapabilitySnapshot{})
 	if parseErr != nil || plan.Language != "old" {
 		t.Fatalf("previous parser not preserved: plan = %#v, error = %v", plan, parseErr)
 	}
+}
+
+func TestRuntimeSwapClosesFailedNativeCandidate(t *testing.T) {
+	root := t.TempDir()
+	modelPath := filepath.Join(root, "functiongemma.gguf")
+	if err := os.WriteFile(modelPath, []byte("model"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Models: config.Models{Root: root, IntentModel: "functiongemma.gguf", Threads: 1}, HomeAssistant: config.HomeAssistant{Timeout: time.Second}}
+	candidate := &runtimeTestEngine{}
+	previousOpen := openLlama
+	defer func() { openLlama = previousOpen }()
+	openLlama = func(context.Context, string, int) (llama.Engine, error) { return candidate, nil }
+	live := newReloadableModels(buildModelSet(cfg, models.RoleIntent, models.RoleSTT))
+	previous := &runtimeTestEngine{output: []byte(`{"version":1,"status":"unknown","language":"old","steps":[],"clarification":"","confidence":0.5}`)}
+	live.current = modelSet{parser: intent.NewNativeParser(previous, 1, time.Second)}
+	defer live.Close()
+
+	err := live.Swap(context.Background(), models.Snapshot{Active: map[models.Role]models.Profile{
+		models.RoleSTT: {Role: models.RoleSTT, Path: "stt", Entry: "model.onnx", Valid: true},
+	}})
+	if err == nil {
+		t.Fatal("accepted failed replacement")
+	}
+	if candidate.closed != 1 {
+		t.Fatalf("candidate close count = %d, want 1", candidate.closed)
+	}
+	if previous.closed != 0 {
+		t.Fatalf("previous close count = %d, want 0", previous.closed)
+	}
+	plan, parseErr := live.Parse(context.Background(), "test", intent.CapabilitySnapshot{})
+	if parseErr != nil || plan.Language != "old" {
+		t.Fatalf("previous parser not preserved: plan = %#v, error = %v", plan, parseErr)
+	}
+}
+
+type runtimeTestEngine struct {
+	output []byte
+	closed int
+}
+
+func (e *runtimeTestEngine) Generate(context.Context, llama.Request) ([]byte, error) {
+	return e.output, nil
+}
+
+func (e *runtimeTestEngine) Close() error {
+	e.closed++
+	return nil
 }
 
 type runtimeTestParser struct{ language string }
