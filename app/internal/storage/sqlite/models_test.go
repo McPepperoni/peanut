@@ -20,7 +20,7 @@ func TestModelStoreReplacesAndListsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewModelStore(db)
-	profiles := []models.Profile{{ID: "stt-local", Role: models.RoleSTT, Runtime: "local", Path: "stt/local", Entry: "model.gguf", Threads: 4, Valid: true}}
+	profiles := []models.Profile{{ID: "stt-local", Role: models.RoleSTT, Runtime: "local", Path: "stt/local", Entry: "model.gguf", Valid: true}}
 	if err := store.ReplaceSnapshot(ctx, profiles); err != nil {
 		t.Fatal(err)
 	}

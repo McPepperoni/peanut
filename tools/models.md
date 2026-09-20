@@ -35,8 +35,7 @@ Allowed roles are `kws`, `vad`, `stt`, `speaker`, and `tts`. Example:
   "role": "stt",
   "runtime": "local",
   "entry": "model.int8.onnx",
-  "sha256": "",
-  "threads": 4
+  "sha256": ""
 }
 ```
 
@@ -47,7 +46,6 @@ Manifest fields:
 - `runtime`: adapter name used by the role.
 - `entry`: relative regular file used as the profile entry point; it cannot escape the profile directory.
 - `sha256`: optional checksum for `entry`, compared case-insensitively; empty disables the checksum check.
-- `threads`: declared profile thread count; keep it positive and aligned with the SQLite CPU configuration.
 
 Unknown manifest fields are rejected. Invalid profiles are reported without discarding a previously active valid role.
 

@@ -60,10 +60,31 @@ func TestNativeContextBoundaryPrecedesPromptDecode(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	boundaryAt := strings.Index(text, "prompt_tokens_len > PEANUT_LLAMA_CONTEXT_SIZE - max_tokens")
-	decodeAt := strings.Index(text, "llama_batch_get_one(prompt_tokens, prompt_tokens_len)")
+	boundaryAt := strings.Index(text, "prompt_token_count > PEANUT_LLAMA_CONTEXT_SIZE - max_tokens")
+	decodeAt := strings.Index(text, "llama_batch_get_one(prompt_tokens, (int32_t) prompt_token_count)")
 	if boundaryAt < 0 || decodeAt < 0 || boundaryAt > decodeAt {
 		t.Fatal("native context boundary must be checked before prompt decode")
+	}
+}
+
+func TestNativePromptBoundsPrecedeTokenBufferAllocation(t *testing.T) {
+	source, err := os.ReadFile("native.cpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	rawGuardAt := strings.Index(text, "prompt_bytes == PEANUT_LLAMA_MAX_PROMPT_BYTES")
+	templateAt := strings.Index(text, "peanut_apply_chat_template(engine->model")
+	tokenBudgetAt := strings.Index(text, "prompt_token_count > PEANUT_LLAMA_CONTEXT_SIZE - max_tokens")
+	tokenBufferAt := strings.Index(text, "malloc(prompt_token_count * sizeof(*prompt_tokens))")
+	if rawGuardAt < 0 || templateAt < 0 || rawGuardAt > templateAt {
+		t.Fatal("native generation must bound raw prompt bytes before applying the chat template")
+	}
+	if tokenBudgetAt < 0 || tokenBufferAt < 0 || tokenBudgetAt > tokenBufferAt {
+		t.Fatal("native generation must reject over-context prompts before allocating token storage")
+	}
+	if !strings.Contains(text, "#define PEANUT_LLAMA_MAX_PROMPT_BYTES") || !strings.Contains(text, "PEANUT_LLAMA_PROMPT_TOO_LARGE") {
+		t.Fatal("native generation must expose an explicit oversized-prompt status")
 	}
 }
 

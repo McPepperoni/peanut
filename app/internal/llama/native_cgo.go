@@ -127,6 +127,8 @@ func nativeError(status C.peanut_llama_status) error {
 		return ErrNativeContext
 	case C.PEANUT_LLAMA_CONTEXT_EXCEEDED:
 		return ErrContextExceeded
+	case C.PEANUT_LLAMA_PROMPT_TOO_LARGE:
+		return ErrPromptTooLarge
 	case C.PEANUT_LLAMA_CHAT_TEMPLATE_FAILED:
 		return ErrNativeChatTemplate
 	case C.PEANUT_LLAMA_GRAMMAR_FAILED:

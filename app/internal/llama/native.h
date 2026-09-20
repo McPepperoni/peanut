@@ -21,7 +21,8 @@ typedef enum peanut_llama_status {
 	PEANUT_LLAMA_DECODE_FAILED = 7,
 	PEANUT_LLAMA_CANCELLED = 8,
 	PEANUT_LLAMA_OUTPUT_FAILED = 9,
-	PEANUT_LLAMA_CONTEXT_EXCEEDED = 10
+	PEANUT_LLAMA_CONTEXT_EXCEEDED = 10,
+	PEANUT_LLAMA_PROMPT_TOO_LARGE = 11
 } peanut_llama_status;
 
 void peanut_llama_backend_init(void);

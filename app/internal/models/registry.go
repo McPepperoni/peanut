@@ -37,7 +37,6 @@ type Profile struct {
 	Path    string `json:"path"`
 	Entry   string `json:"entry"`
 	SHA256  string `json:"sha256"`
-	Threads int    `json:"threads"`
 	Valid   bool   `json:"valid"`
 	Error   string `json:"error"`
 	Active  bool   `json:"-"`
@@ -49,7 +48,6 @@ type manifest struct {
 	Runtime string `json:"runtime"`
 	Entry   string `json:"entry"`
 	SHA256  string `json:"sha256"`
-	Threads int    `json:"threads"`
 }
 
 type Snapshot struct {
@@ -279,7 +277,6 @@ func readProfile(root, directoryRole, profilePath, manifestPath string) Profile 
 	profile.Runtime = decoded.Runtime
 	profile.Entry = decoded.Entry
 	profile.SHA256 = decoded.SHA256
-	profile.Threads = decoded.Threads
 	if decodeErr != nil {
 		profile.Error = fmt.Sprintf("decode manifest: %v", decodeErr)
 		return profile

@@ -41,7 +41,7 @@
       },
       "ModelProfile": {
         "type": "object",
-        "required": ["id", "role", "runtime", "path", "entry", "sha256", "threads", "valid", "error"],
+        "required": ["id", "role", "runtime", "path", "entry", "sha256", "valid", "error"],
         "properties": {
           "id": { "type": "string" },
           "role": { "type": "string", "enum": ["kws", "vad", "stt", "speaker", "tts"] },
@@ -49,7 +49,6 @@
           "path": { "type": "string" },
           "entry": { "type": "string" },
           "sha256": { "type": "string" },
-          "threads": { "type": "integer" },
           "valid": { "type": "boolean" },
           "error": { "type": "string" }
         }

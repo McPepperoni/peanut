@@ -13,6 +13,7 @@ var (
 	ErrNativeLoad         = errors.New("llama model load failed")
 	ErrNativeContext      = errors.New("llama context creation failed")
 	ErrContextExceeded    = errors.New("llama request exceeds context window")
+	ErrPromptTooLarge     = errors.New("llama prompt exceeds byte limit")
 	ErrNativeChatTemplate = errors.New("llama chat template application failed")
 	ErrNativeGrammar      = errors.New("llama grammar creation failed")
 	ErrNativeTokenize     = errors.New("llama prompt tokenization failed")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -105,6 +106,19 @@ func TestRegistryValidatesStrictManifestAndChecksum(t *testing.T) {
 	}
 	if !valid["stt/good"] || valid["stt/bad-checksum"] || valid["stt/unknown-field"] {
 		t.Fatalf("validity = %#v", valid)
+	}
+}
+
+func TestRegistryRejectsRemovedThreadsManifestField(t *testing.T) {
+	root := t.TempDir()
+	writeModelManifest(t, root, "stt/threads", `{"id":"threads","role":"stt","runtime":"local","entry":"model.gguf","threads":4}`)
+
+	snapshot, err := NewRegistry(root, &fakeModelStore{}, nil).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Profiles) != 1 || snapshot.Profiles[0].Valid || !strings.Contains(snapshot.Profiles[0].Error, `unknown field "threads"`) {
+		t.Fatalf("profile = %#v", snapshot.Profiles)
 	}
 }
 

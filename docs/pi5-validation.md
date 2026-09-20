@@ -70,7 +70,6 @@ The manifest fields are:
 | `runtime` | Non-empty adapter/executable name. |
 | `entry` | Relative regular entry file contained by the profile directory. |
 | `sha256` | Optional SHA-256 of `entry`; empty means no checksum assertion. |
-| `threads` | Declared positive profile thread count, kept aligned with SQLite CPU settings. |
 
 Unknown fields, path traversal, missing entry files, and checksum mismatches make a profile invalid. Invalid profiles appear in `model verify` and `GET /api/v1/models`; they do not replace a previously active valid role. `models/` is ignored by Git. SQLite stores profile metadata and selection only, never model bytes.
 

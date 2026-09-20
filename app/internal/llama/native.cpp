@@ -16,6 +16,7 @@
 #define PEANUT_LLAMA_CONTEXT_SIZE 4096
 // Fixed 4096-token batch bounds batch storage while covering the full context window.
 #define PEANUT_LLAMA_BATCH_SIZE 4096
+#define PEANUT_LLAMA_MAX_PROMPT_BYTES (64u * 1024u)
 #define PEANUT_LLAMA_MAX_OUTPUT_BYTES (4u * 1024u * 1024u)
 #define PEANUT_LLAMA_SAMPLER_SEED 42u
 
@@ -185,8 +186,16 @@ peanut_llama_status peanut_llama_generate(
 	const unsigned char **output,
 	size_t *output_len) {
 	if (engine == NULL || prompt == NULL || prompt[0] == '\0' || schema == NULL || max_tokens <= 0 ||
+		max_tokens > PEANUT_LLAMA_CONTEXT_SIZE ||
 		output == NULL || output_len == NULL) {
 		return PEANUT_LLAMA_INVALID;
+	}
+	size_t prompt_bytes = 0;
+	while (prompt[prompt_bytes] != '\0') {
+		if (prompt_bytes == PEANUT_LLAMA_MAX_PROMPT_BYTES) {
+			return PEANUT_LLAMA_PROMPT_TOO_LARGE;
+		}
+		prompt_bytes++;
 	}
 	*output = NULL;
 	*output_len = 0;
@@ -203,22 +212,24 @@ peanut_llama_status peanut_llama_generate(
 	if (template_status != PEANUT_LLAMA_OK) {
 		return template_status;
 	}
+	if (formatted_prompt.size() > PEANUT_LLAMA_MAX_PROMPT_BYTES) {
+		return PEANUT_LLAMA_PROMPT_TOO_LARGE;
+	}
 	int32_t prompt_tokens_len = llama_tokenize(vocab, formatted_prompt.c_str(), (int32_t) formatted_prompt.size(), NULL, 0, true, true);
 	if (prompt_tokens_len >= 0) {
 		return PEANUT_LLAMA_TOKENIZE_FAILED;
 	}
-	prompt_tokens_len = -prompt_tokens_len;
-	llama_token *prompt_tokens = static_cast<llama_token *>(malloc((size_t) prompt_tokens_len * sizeof(*prompt_tokens)));
+	size_t prompt_token_count = (size_t) (-(int64_t) prompt_tokens_len);
+	if (prompt_token_count > PEANUT_LLAMA_CONTEXT_SIZE - max_tokens) {
+		return PEANUT_LLAMA_CONTEXT_EXCEEDED;
+	}
+	llama_token *prompt_tokens = static_cast<llama_token *>(malloc(prompt_token_count * sizeof(*prompt_tokens)));
 	if (prompt_tokens == NULL) {
 		return PEANUT_LLAMA_TOKENIZE_FAILED;
 	}
-	if (llama_tokenize(vocab, formatted_prompt.c_str(), (int32_t) formatted_prompt.size(), prompt_tokens, prompt_tokens_len, true, true) < 0) {
+	if (llama_tokenize(vocab, formatted_prompt.c_str(), (int32_t) formatted_prompt.size(), prompt_tokens, (int32_t) prompt_token_count, true, true) < 0) {
 		free(prompt_tokens);
 		return PEANUT_LLAMA_TOKENIZE_FAILED;
-	}
-	if (prompt_tokens_len > PEANUT_LLAMA_CONTEXT_SIZE - max_tokens) {
-		free(prompt_tokens);
-		return PEANUT_LLAMA_CONTEXT_EXCEEDED;
 	}
 
 	std::string grammar;
@@ -243,7 +254,7 @@ peanut_llama_status peanut_llama_generate(
 	llama_sampler_chain_add(engine->sampler, llama_sampler_init_temp(0.0f));
 	llama_sampler_chain_add(engine->sampler, llama_sampler_init_dist(PEANUT_LLAMA_SAMPLER_SEED));
 
-	struct llama_batch batch = llama_batch_get_one(prompt_tokens, prompt_tokens_len);
+	struct llama_batch batch = llama_batch_get_one(prompt_tokens, (int32_t) prompt_token_count);
 	if (llama_model_has_encoder(engine->model)) {
 		if (llama_encode(engine->context, batch) != 0) {
 			free(prompt_tokens);
