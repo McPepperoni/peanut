@@ -66,7 +66,7 @@ The manifest fields are:
 | Field | Meaning |
 | --- | --- |
 | `id` | Stable profile ID; duplicate IDs are invalid. |
-| `role` | `kws`, `vad`, `stt`, `speaker`, `tts`, or `intent`; must match the directory. |
+| `role` | `kws`, `vad`, `stt`, `speaker`, or `tts`; must match the directory. |
 | `runtime` | Non-empty adapter/executable name. |
 | `entry` | Relative regular entry file contained by the profile directory. |
 | `sha256` | Optional SHA-256 of `entry`; empty means no checksum assertion. |
