@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
 	"peanut/internal/audio"
 	"peanut/internal/audio/playback"
+	"peanut/internal/logging"
 	mlspeaker "peanut/internal/ml/speaker"
 	"peanut/internal/ml/stt"
 	"peanut/internal/ml/tts"
@@ -19,6 +21,7 @@ import (
 
 type commandDependencies struct {
 	ModelRoot   string
+	Logger      *slog.Logger
 	Player      audio.Player
 	Synthesizer tts.Synthesizer
 	Transcriber stt.Transcriber
@@ -28,6 +31,7 @@ type commandDependencies struct {
 }
 
 func dispatch(ctx context.Context, args []string, dependencies commandDependencies, output io.Writer) error {
+	dependencies.Logger = logging.Normalize(dependencies.Logger)
 	if len(args) == 0 {
 		return usage()
 	}

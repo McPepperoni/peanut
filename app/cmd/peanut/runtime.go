@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"peanut/internal/audio/playback"
 	"peanut/internal/config"
 	"peanut/internal/intent"
+	"peanut/internal/logging"
 	"peanut/internal/ml"
 	"peanut/internal/ml/kws"
 	"peanut/internal/ml/sherpa"
@@ -49,16 +51,23 @@ type modelSetBuilder func(context.Context, models.Snapshot) (modelSet, error)
 type reloadableModels struct {
 	mu      sync.RWMutex
 	build   modelSetBuilder
+	logger  *slog.Logger
 	current modelSet
 }
 
 func newReloadableModels(build modelSetBuilder) *reloadableModels {
-	return &reloadableModels{build: build}
+	return newReloadableModelsWithLogger(build, logging.Nop())
+}
+
+func newReloadableModelsWithLogger(build modelSetBuilder, logger *slog.Logger) *reloadableModels {
+	return &reloadableModels{build: build, logger: logging.Normalize(logger)}
 }
 
 func (r *reloadableModels) Swap(ctx context.Context, snapshot models.Snapshot) error {
+	r.logger.Info("model.reload", "component", "model", "status", "started")
 	next, err := r.build(ctx, snapshot)
 	if err != nil {
+		r.logger.Error("model.reload", "component", "model", "status", "failed", "error_type", "operation_failed")
 		return err
 	}
 	r.mu.Lock()
@@ -66,6 +75,7 @@ func (r *reloadableModels) Swap(ctx context.Context, snapshot models.Snapshot) e
 	r.current = next
 	r.mu.Unlock()
 	_ = closeModelSet(previous)
+	r.logger.Info("model.reload", "component", "model", "status", "succeeded")
 	return nil
 }
 
@@ -201,9 +211,15 @@ func (s runtimeSpeaker) Identify(ctx context.Context, input audio.Audio) mlspeak
 }
 
 func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err error) {
+	return runConfiguredWithLogger(ctx, cfg, db, logging.Nop())
+}
+
+func runConfiguredWithLogger(ctx context.Context, cfg config.Config, db *sqlite.DB, logger *slog.Logger) (err error) {
+	logger = logging.Normalize(logger)
+	logger.Info("runtime.start", "component", "runtime", "status", "starting")
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	runtime, err := newConfiguredRuntime(runCtx, cfg, db)
+	runtime, err := newConfiguredRuntimeWithLogger(runCtx, cfg, db, logger)
 	if err != nil {
 		return err
 	}
@@ -213,20 +229,26 @@ func runConfigured(ctx context.Context, cfg config.Config, db *sqlite.DB) (err e
 			err = closeErr
 		}
 	}()
-	server := api.NewServer(db, runtime.homeAssistant, runtime.modelRegistry)
+	server := api.NewServerWithLogger(db, runtime.homeAssistant, runtime.modelRegistry, logger)
 	address, err := server.Address(runCtx)
 	if err != nil {
 		return err
 	}
 	server.SetBoundAddress(address)
 	httpServer := &http.Server{Addr: address, Handler: server.Handler()}
-	return runRuntimeProcesses(
+	err = runRuntimeProcesses(
 		runCtx,
 		cancel,
 		runtime.coordinator.Run,
 		httpServer.ListenAndServe,
 		func() error { return shutdownHTTPServer(httpServer, gracefulHTTPShutdownTimeout) },
 	)
+	if err != nil {
+		logger.Error("runtime.stop", "component", "runtime", "status", "failed", "error_type", "operation_failed")
+		return err
+	}
+	logger.Info("runtime.stop", "component", "runtime", "status", "stopped")
+	return nil
 }
 
 func runRuntimeProcesses(ctx context.Context, cancel context.CancelFunc, runCoordinator func(context.Context) error, serve func() error, shutdownServer func() error) error {
@@ -322,10 +344,16 @@ type configuredRuntime struct {
 	speakerStore  *speakerstore.Store
 	capture       audio.Capture
 	player        audio.Player
+	logger        *slog.Logger
 }
 
 func newConfiguredRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB) (*configuredRuntime, error) {
-	liveModels := newReloadableModels(buildModelSet(cfg))
+	return newConfiguredRuntimeWithLogger(ctx, cfg, db, logging.Nop())
+}
+
+func newConfiguredRuntimeWithLogger(ctx context.Context, cfg config.Config, db *sqlite.DB, logger *slog.Logger) (*configuredRuntime, error) {
+	logger = logging.Normalize(logger)
+	liveModels := newReloadableModelsWithLogger(buildModelSetWithLogger(cfg, logger), logger)
 	ready := false
 	defer func() {
 		if !ready {
@@ -374,15 +402,21 @@ func newConfiguredRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB)
 		Speaker:         runtimeSpeaker{models: liveModels, store: speakerStore},
 		Registry:        providerRegistry,
 		Capabilities:    capabilities,
+		Logger:          logger,
 	})
 	if err != nil {
 		return nil, err
 	}
 	ready = true
-	return &configuredRuntime{coordinator: coordinator, homeAssistant: homeAssistant, modelRegistry: modelRegistry, modelSet: liveModels, speakerStore: speakerStore, capture: systemCapture, player: systemPlayer}, nil
+	return &configuredRuntime{coordinator: coordinator, homeAssistant: homeAssistant, modelRegistry: modelRegistry, modelSet: liveModels, speakerStore: speakerStore, capture: systemCapture, player: systemPlayer, logger: logger}, nil
 }
 
 func newCommandRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB, command string) (*configuredRuntime, error) {
+	return newCommandRuntimeWithLogger(ctx, cfg, db, command, logging.Nop())
+}
+
+func newCommandRuntimeWithLogger(ctx context.Context, cfg config.Config, db *sqlite.DB, command string, logger *slog.Logger) (*configuredRuntime, error) {
+	logger = logging.Normalize(logger)
 	var roles []models.Role
 	switch command {
 	case "speak":
@@ -401,13 +435,14 @@ func newCommandRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB, co
 				selected = append(selected, models.RoleSpeaker)
 			}
 		}
-		set, err := buildModelSet(cfg, selected...)(buildCtx, snapshot)
+		set, err := buildModelSetWithLogger(cfg, logger, selected...)(buildCtx, snapshot)
 		if err != nil && command == "transcribe" && len(selected) > len(roles) {
-			return buildModelSet(cfg, roles...)(buildCtx, snapshot)
+			logger.Warn("model.fallback", "component", "model", "role", string(models.RoleSpeaker), "status", "fallback")
+			return buildModelSetWithLogger(cfg, logger, roles...)(buildCtx, snapshot)
 		}
 		return set, err
 	}
-	liveModels := newReloadableModels(build)
+	liveModels := newReloadableModelsWithLogger(build, logger)
 	ready := false
 	defer func() {
 		if !ready {
@@ -427,6 +462,7 @@ func newCommandRuntime(ctx context.Context, cfg config.Config, db *sqlite.DB, co
 		speakerStore:  speakerstore.NewSpeakerStore(db),
 		capture:       systemCapture,
 		player:        systemPlayer,
+		logger:        logger,
 	}, nil
 }
 
@@ -512,6 +548,31 @@ func buildModelSet(cfg config.Config, roles ...models.Role) modelSetBuilder {
 	}
 }
 
+func buildModelSetWithLogger(cfg config.Config, logger *slog.Logger, roles ...models.Role) modelSetBuilder {
+	logger = logging.Normalize(logger)
+	base := buildModelSet(cfg, roles...)
+	if len(roles) == 0 {
+		roles = []models.Role{models.RoleKWS, models.RoleVAD, models.RoleSTT, models.RoleSpeaker, models.RoleTTS, models.RoleIntent}
+	}
+	return func(ctx context.Context, snapshot models.Snapshot) (modelSet, error) {
+		started := time.Now()
+		for _, role := range roles {
+			logger.Info("model.load", "component", "model", "role", string(role), "status", "started")
+		}
+		set, err := base(ctx, snapshot)
+		status := "succeeded"
+		level := slog.LevelInfo
+		if err != nil {
+			status = "failed"
+			level = slog.LevelError
+		}
+		for _, role := range roles {
+			logger.LogAttrs(ctx, level, "model.load", slog.String("component", "model"), slog.String("role", string(role)), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()))
+		}
+		return set, err
+	}
+}
+
 func intentExecutableName(runtimeName string) (string, error) {
 	switch runtimeName {
 	case "local", "llama.cpp", "llama-cli":
@@ -577,6 +638,7 @@ func max(left, right int) int {
 func (r *configuredRuntime) commandDependencies(ctx context.Context) commandDependencies {
 	modelSpeaker := runtimeSpeaker{models: r.modelSet, store: r.speakerStore}
 	return commandDependencies{
+		Logger:      r.logger,
 		Player:      r.player,
 		Synthesizer: r.modelSet,
 		Transcriber: r.modelSet,

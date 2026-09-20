@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"peanut/internal/audio"
 	"peanut/internal/intent"
 	"peanut/internal/interaction"
+	"peanut/internal/logging"
 	"peanut/internal/ml/kws"
 	mlspeaker "peanut/internal/ml/speaker"
 	"peanut/internal/ml/stt"
@@ -31,27 +33,38 @@ type Dependencies struct {
 	Speaker         mlspeaker.SpeakerIdentifier
 	Registry        *providers.Registry
 	Capabilities    intent.CapabilitySnapshot
+	Logger          *slog.Logger
 }
 
 type Coordinator struct {
 	cfg     Config
 	deps    Dependencies
 	machine *Machine
+	logger  *slog.Logger
 }
 
 func NewCoordinator(cfg Config, deps Dependencies) (*Coordinator, error) {
+	deps.Logger = logging.Normalize(deps.Logger)
 	if deps.Capture == nil || deps.Player == nil || deps.WakeDetector == nil || deps.VAD == nil || deps.Transcriber == nil || deps.IntentParser == nil || deps.Synthesizer == nil || deps.Registry == nil {
 		return nil, errors.New("coordinator dependencies are incomplete")
 	}
 	if err := intent.ValidateSnapshot(deps.Capabilities); err != nil {
 		return nil, fmt.Errorf("invalid coordinator capabilities: %w", err)
 	}
-	return &Coordinator{cfg: cfg, deps: deps, machine: NewMachine(cfg)}, nil
+	return &Coordinator{cfg: cfg, deps: deps, machine: NewMachine(cfg), logger: deps.Logger}, nil
 }
 
 func (c *Coordinator) State() State { return c.machine.State() }
 
-func (c *Coordinator) Run(ctx context.Context) error {
+func (c *Coordinator) Run(ctx context.Context) (err error) {
+	c.logger.Info("pipeline.start", "component", "pipeline", "status", "started")
+	defer func() {
+		if err != nil {
+			c.logger.Error("pipeline.stop", "component", "pipeline", "status", "failed", "error_type", "operation_failed")
+			return
+		}
+		c.logger.Info("pipeline.stop", "component", "pipeline", "status", "stopped")
+	}()
 	frames, err := c.deps.Capture.Capture(ctx)
 	if err != nil {
 		return err
@@ -65,6 +78,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		}
 		frame, ok, timedOut := c.nextFrame(ctx, frames)
 		if timedOut {
+			c.logger.Info("pipeline.timeout", "component", "pipeline", "status", "recovered")
 			if err := c.machine.Transition(Timeout); err != nil {
 				return c.recover(err)
 			}
@@ -93,6 +107,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if err := c.machine.Transition(WakeDetected); err != nil {
 				return err
 			}
+			c.logger.Info("pipeline.wake", "component", "pipeline", "status", "detected")
 			if err := runStage(ctx, c.cfg.AcknowledgementTimeout, func(stageCtx context.Context) error {
 				return c.deps.Player.Play(stageCtx, c.deps.Acknowledgement)
 			}); err != nil {
@@ -121,6 +136,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 				if err := c.machine.Transition(SpeechStarted); err != nil {
 					return c.recover(err)
 				}
+				c.logger.Info("pipeline.speech", "component", "pipeline", "status", "started")
 				for _, buffered := range preRoll {
 					recording = append(recording, buffered.Samples...)
 				}
@@ -133,6 +149,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if err := c.machine.Transition(SpeechEnded); err != nil {
 				return c.recover(err)
 			}
+			c.logger.Info("pipeline.speech", "component", "pipeline", "status", "ended")
 			if err := runStage(ctx, c.cfg.ProcessingTimeout, func(stageCtx context.Context) error {
 				return c.process(stageCtx, recording)
 			}); err != nil {
@@ -141,6 +158,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if err := drain(ctx, frames, c.cfg.PlaybackTail); err != nil {
 				return c.recover(err)
 			}
+			c.logger.Info("pipeline.playback", "component", "pipeline", "status", "completed")
 			completed = true
 			preRoll = nil
 			recording = nil
@@ -199,7 +217,18 @@ func drain(ctx context.Context, frames <-chan audio.Frame, duration time.Duratio
 	}
 }
 
-func (c *Coordinator) process(ctx context.Context, samples []float32) error {
+func (c *Coordinator) process(ctx context.Context, samples []float32) (err error) {
+	started := time.Now()
+	c.logger.Info("pipeline.process", "component", "pipeline", "stage", "start", "status", "started")
+	defer func() {
+		status := "succeeded"
+		level := slog.LevelInfo
+		if err != nil {
+			status = "failed"
+			level = slog.LevelError
+		}
+		c.logger.LogAttrs(ctx, level, "pipeline.process", slog.String("component", "pipeline"), slog.String("stage", "complete"), slog.String("status", status), slog.Int64("duration_ms", time.Since(started).Milliseconds()))
+	}()
 	input, err := audio.NewAudio(audio.SampleRate, audio.Channels, samples)
 	if err != nil {
 		return err
@@ -347,6 +376,7 @@ func (c *Coordinator) resetDetectors() error {
 }
 
 func (c *Coordinator) recover(err error) error {
+	c.logger.Error("pipeline.recover", "component", "pipeline", "status", "recovering", "error_type", "operation_failed")
 	if resetErr := c.resetDetectors(); resetErr != nil {
 		err = fmt.Errorf("%w; %v", err, resetErr)
 	}

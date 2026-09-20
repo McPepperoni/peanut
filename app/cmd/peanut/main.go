@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,16 +12,19 @@ import (
 	"peanut/internal/api"
 	"peanut/internal/audio/playback"
 	"peanut/internal/config"
+	"peanut/internal/logging"
 	"peanut/internal/models"
 	"peanut/internal/providers"
 	"peanut/internal/storage/sqlite"
 )
 
 func main() {
+	logger := logging.New(os.Stderr)
 	ctx, stop := signal.NotifyContext(context.Background(), terminationSignals()...)
 	defer stop()
-	if err := runMain(ctx, os.Args, config.DefaultDatabasePath, commandDependencies{}, os.Stdout); err != nil {
-		log.Fatal(err)
+	if err := runMain(ctx, os.Args, config.DefaultDatabasePath, commandDependencies{Logger: logger}, os.Stdout); err != nil {
+		logger.Error("process.exit", "component", "process", "status", "failed", "error_type", "operation_failed")
+		os.Exit(1)
 	}
 }
 
@@ -30,11 +33,14 @@ func terminationSignals() []os.Signal {
 }
 
 func runMain(ctx context.Context, args []string, databasePath string, dependencies commandDependencies, output io.Writer) error {
+	dependencies.Logger = logging.Normalize(dependencies.Logger)
+	dependencies.Logger.Info("process.start", "component", "process", "status", "started")
 	db, err := sqlite.Open(ctx, databasePath)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	dependencies.Logger.Info("database.open", "component", "database", "status", "succeeded")
 	if err := db.Migrate(ctx); err != nil {
 		return err
 	}
@@ -42,7 +48,7 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 		return err
 	}
 	if len(args) > 1 && args[1] == "api" {
-		return serveAPI(ctx, db)
+		return serveAPIWithLogger(ctx, db, dependencies.Logger)
 	}
 	runtimeConfig, err := config.Load(databasePath)
 	if err != nil {
@@ -57,7 +63,7 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 	}
 	if args[0] == "run" && dependencies.Run == nil {
 		dependencies.Run = func(runCtx context.Context) error {
-			return runConfigured(runCtx, runtimeConfig, db)
+			return runConfiguredWithLogger(runCtx, runtimeConfig, db, dependencies.Logger)
 		}
 	}
 	if args[0] == "test-audio" && dependencies.Player == nil {
@@ -65,7 +71,7 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 	}
 	var commandRuntime *configuredRuntime
 	if needsCommandRuntime(args[0], dependencies) {
-		commandRuntime, err = newCommandRuntime(ctx, runtimeConfig, db, args[0])
+		commandRuntime, err = newCommandRuntimeWithLogger(ctx, runtimeConfig, db, args[0], dependencies.Logger)
 		if err != nil {
 			return err
 		}
@@ -74,6 +80,7 @@ func runMain(ctx context.Context, args []string, databasePath string, dependenci
 			_ = commandRuntime.modelSet.Close()
 		}()
 		configured := commandRuntime.commandDependencies(ctx)
+		configured.Logger = dependencies.Logger
 		if dependencies.Player == nil {
 			dependencies.Player = configured.Player
 		}
@@ -109,22 +116,34 @@ func needsCommandRuntime(command string, dependencies commandDependencies) bool 
 }
 
 func serveAPI(ctx context.Context, db *sqlite.DB) error {
+	return serveAPIWithLogger(ctx, db, logging.Nop())
+}
+
+func serveAPIWithLogger(ctx context.Context, db *sqlite.DB, logger *slog.Logger) error {
+	logger = logging.Normalize(logger)
+	logger.Info("api.start", "component", "api", "status", "starting")
 	provider := providers.NewHomeAssistantProvider(db, nil)
 	var cfg config.Config
 	if err := sqlite.NewConfigStore(db).Load(ctx, &cfg); err != nil {
 		return err
 	}
 	modelRegistry := newAPIModelRegistry(cfg, db)
-	server := api.NewServer(db, provider, modelRegistry)
+	server := api.NewServerWithLogger(db, provider, modelRegistry, logger)
 	address, err := server.Address(ctx)
 	if err != nil {
 		return err
 	}
 	server.SetBoundAddress(address)
 	httpServer := &http.Server{Addr: address, Handler: server.Handler()}
-	return runHTTPServer(ctx, httpServer.ListenAndServe, func() error {
+	err = runHTTPServer(ctx, httpServer.ListenAndServe, func() error {
 		return shutdownHTTPServer(httpServer, gracefulHTTPShutdownTimeout)
 	})
+	if err != nil {
+		logger.Error("api.stop", "component", "api", "status", "failed", "error_type", "operation_failed")
+		return err
+	}
+	logger.Info("api.stop", "component", "api", "status", "stopped")
+	return nil
 }
 
 func newAPIModelRegistry(cfg config.Config, db *sqlite.DB) *models.Registry {
