@@ -38,8 +38,10 @@ Build the native Linux archive from the repository root after setup:
 ./tools/build-llama.sh amd64
 ```
 
-The helper verifies the pinned commit, disables accelerator backends and
-examples/tests/tools, and installs static archives at
-`build/llama/amd64/prefix`. It prints the `CGO_CFLAGS`, `CGO_LDFLAGS`, and
-`go build -tags peanut_llama` command for the selected target. It never fetches
-source, downloads models, or runs inference subprocesses.
+The helper verifies the pinned commit, rejects a target/host mismatch unless
+`CMAKE_TOOLCHAIN_FILE` names an explicit cross-toolchain file, disables
+accelerator backends and examples/tests/tools, builds `llama-common`, and
+installs static archives at `build/llama/amd64/prefix`. It prints the
+`CGO_CFLAGS`, `CGO_CXXFLAGS`, `CGO_LDFLAGS`, and `go build -tags peanut_llama`
+command for the selected target. It never fetches source, downloads models, or
+runs inference subprocesses.

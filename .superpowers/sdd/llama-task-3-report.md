@@ -133,3 +133,40 @@ host or CI runner.
 The host also has no WSL distribution, so `bash -n tools/build-llama.sh` could
 not run locally. The script was reviewed for `set -euo pipefail`, exact pin
 checking, quoted paths, no-fetch behavior, and the required CMake flags.
+
+## Task 3 review fixes
+
+Applied all requested review fixes without Task 4 runtime wiring:
+
+- Renamed the native shim to `native.cpp`. `Request.Schema` remains JSON
+  Schema text; the shim parses it with pinned `common_json::parse`, converts it
+  with `json_schema_to_grammar(..., true)`, then passes the resulting GBNF to
+  `llama_sampler_init_grammar`. Conversion exceptions remain strict grammar
+  failures. No subprocess or raw tensor API was added.
+- Added deferred CGO output cleanup after every native generation call. Success
+  bytes are copied before the deferred free runs.
+- Added fixed sampler seed `42`, zero temperature, and seeded distribution
+  sampling for deterministic constrained generation.
+- Enabled `LLAMA_BUILD_COMMON`, disabled common subprocess support, copied all
+  static archives including `llama-common` into the install prefix, and added
+  common libraries to the printed and CGO linker flags.
+- `tools/build-llama.sh` now rejects target/host mismatch unless an existing
+  `CMAKE_TOOLCHAIN_FILE` is supplied.
+
+## Review-fix verification
+
+Passed:
+
+```text
+g++ -std=c++17 -fsyntax-only -Iapp/internal/llama -Ithird-party/llama.cpp/include -Ithird-party/llama.cpp/ggml/include -Ithird-party/llama.cpp/common app/internal/llama/native.cpp
+bash -n tools/build-llama.sh
+go test -count=1 ./internal/llama
+ok   peanut/internal/llama  0.325s
+go vet ./internal/llama
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test -c -o .llama-arm64.test ./internal/llama
+git diff --check
+```
+
+The temporary ARM64 test binary was removed. Native archive linking was not
+run because this host has no built pinned llama.cpp archives; the updated
+build helper now produces and installs the required `llama-common` archive.

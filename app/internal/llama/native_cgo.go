@@ -4,9 +4,10 @@ package llama
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../../third-party/llama.cpp/include -I${SRCDIR}/../../../third-party/llama.cpp/ggml/include
-#cgo linux LDFLAGS: -llama -lggml -lggml-cpu -lggml-base -lstdc++ -lm -ldl -pthread
-#cgo darwin LDFLAGS: -llama -lggml -lggml-cpu -lggml-base -lc++ -lm
-#cgo windows LDFLAGS: -llama -lggml -lggml-cpu -lggml-base
+#cgo CXXFLAGS: -I${SRCDIR}/../../../third-party/llama.cpp/include -I${SRCDIR}/../../../third-party/llama.cpp/ggml/include -I${SRCDIR}/../../../third-party/llama.cpp/common
+#cgo linux LDFLAGS: -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base -lstdc++ -lm -ldl -pthread
+#cgo darwin LDFLAGS: -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base -lc++ -lm
+#cgo windows LDFLAGS: -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base
 #include <stdlib.h>
 #include "native.h"
 */
@@ -86,27 +87,20 @@ func (e *nativeEngine) Generate(ctx context.Context, request Request) ([]byte, e
 		(**C.uchar)(unsafe.Pointer(&nativeOutput)),
 		&nativeOutputLen,
 	)
+	defer C.peanut_llama_free_output(e.native)
 	close(stop)
 	<-done
 	if err := ctx.Err(); err != nil {
-		if nativeOutput != nil {
-			C.peanut_llama_free_output(e.native)
-		}
 		return nil, err
 	}
 	if status != C.PEANUT_LLAMA_OK {
-		if nativeOutput != nil {
-			C.peanut_llama_free_output(e.native)
-		}
 		return nil, nativeError(status)
 	}
 	if nativeOutput == nil || nativeOutputLen == 0 {
-		C.peanut_llama_free_output(e.native)
 		return nil, ErrNativeOutput
 	}
 	result := append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(nativeOutput)), int(nativeOutputLen))...)
 	runtime.KeepAlive(request)
-	C.peanut_llama_free_output(e.native)
 	return result, nil
 }
 
