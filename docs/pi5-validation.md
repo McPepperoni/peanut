@@ -4,12 +4,17 @@ Peanut is a local-first, CPU-only runtime. Mandatory validation uses portable Go
 
 ## Platform matrix
 
-| Target | Mandatory check | Native check |
-| --- | --- | --- |
-| Linux desktop | Pure test, vet, and build | Optional sherpa smoke and audio check |
-| Windows desktop | Pure test, vet, and build | Optional platform backend check |
-| macOS desktop | Pure test, vet, and build | Optional platform backend check |
-| Linux ARM64 / Pi 5 | ARM64 compile-only check | Optional sherpa/audio/runtime check |
+| Target | Release artifact | Intent backend | Mandatory check |
+| --- | --- | --- | --- |
+| Linux amd64 | `peanut-linux-amd64` | native static CGO | test, vet, build |
+| Linux arm64 / Pi 5 | `peanut-linux-arm64` | native static CGO | ARM64 compile-only check |
+| Windows amd64 | `peanut-windows-amd64.exe` | unavailable stub by default | test, vet, build |
+| macOS arm64 | `peanut-darwin-arm64` | unavailable stub by default | test, vet, build |
+
+The opt-in native build tag is `peanut_llama`. Windows and macOS default
+artifacts intentionally report llama unavailable; they do not silently fall
+back to a subprocess or download a model. A `v*` tag publishes all four
+artifacts in one GitHub Release using `GITHUB_TOKEN`.
 
 From `app/`, run the mandatory commands:
 
@@ -31,7 +36,21 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test ./... -run '^$' -exec true
 
 ## Model installation
 
-Set the model root through SQLite configuration; the default is `models`. Do not use environment variables for runtime configuration. Install profiles at:
+Set the model root through SQLite configuration; the default is `models`. Do not use environment variables for runtime configuration.
+
+The intent GGUF is a single external flat file:
+
+```text
+/var/lib/peanut/models/<model-name>.gguf
+Models.Root=/var/lib/peanut/models
+Models.IntentModel=functiongemma.gguf
+```
+
+The file must be a regular `.gguf` file directly under `Models.Root`; model
+bytes are never stored in Git, SQLite, or release artifacts. Do not create a
+role/profile manifest for this file.
+
+Sherpa model profiles remain role directories:
 
 ```text
 models/<role>/<profile>/model.json
@@ -69,7 +88,20 @@ Verify from the repository root:
 
 ## Native prerequisites and failure boundary
 
-Optional sherpa validation needs a released sherpa-onnx C API archive, matching headers and shared library, a CPU-only build with `CGO_ENABLED=1`, and the official model bundles. Do not clone sherpa-onnx into this repository. The native build must use the matching include/library paths and ARM64 shared library on Pi 5.
+Linux llama validation needs the checked-out submodule at
+`a894dae939d426954ce54bb604824f1ae918a0c5`, a CMake/compiler toolchain, and
+the native build helper:
+
+```sh
+./tools/setup-llama.sh
+./tools/build-llama.sh arm64
+```
+
+The helper builds CPU-only static archives and never fetches source or model
+files. Native smoke requires a user-provided external GGUF; the repository
+does not contain model weights. Optional sherpa validation separately needs a
+released sherpa-onnx C API archive, matching headers/shared library, and the
+official model bundles. Do not clone sherpa-onnx into this repository.
 
 Linux uses the system `arecord` and `aplay` utilities as its narrow audio boundary. Install ALSA utilities, grant the service access to the selected devices, and set SQLite `Audio.InputDevice` / `Audio.OutputDevice` when the defaults are not correct. Capture and playback use raw signed 16-bit little-endian PCM at 16 kHz mono; capture is emitted as 320-sample frames. Non-Linux platforms keep the unsupported runtime boundary. File WAV adapters and pure tests remain available.
 
@@ -91,4 +123,8 @@ Run with the exact model profiles and audio device intended for deployment. Reco
 4. Long run: operate for at least one representative session window, exercise wake/VAD/STT/intent/TTS, reload through `GET /api/v1/models`, and confirm no resource, memory, or latency drift.
 5. Failure preservation: introduce a bad checksum or missing entry for one role, call reload, confirm the invalid profile is reported, and confirm previously active valid roles remain available.
 
-Pure test, vet, and build commands are mandatory for every change. Native sherpa inference, hardware audio, real-time factor, memory, thermal, and long-run checks are optional smoke checks until Pi hardware, model files, shared libraries, and an audio backend are available.
+Pure test, vet, and build commands are mandatory for every change. Native
+llama/sherpa inference, hardware audio, real-time factor, memory, thermal, and
+long-run checks are optional smoke checks until Pi hardware, model files,
+static/shared libraries, and an audio backend are available. Peanut production
+does not require Docker Compose or Node.js.

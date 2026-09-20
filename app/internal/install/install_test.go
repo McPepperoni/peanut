@@ -35,6 +35,46 @@ func TestLlamaSetupScripts(t *testing.T) {
 	}
 }
 
+func TestLlamaDocumentationContract(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{
+		"README.md",
+		"tools/llama.cpp.md",
+		"tools/models.md",
+		"docs/pi5-validation.md",
+	}
+	var docs strings.Builder
+	for _, path := range paths {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs.Write(data)
+	}
+	text := docs.String()
+	for _, required := range []string{
+		"a894dae939d426954ce54bb604824f1ae918a0c5",
+		"git submodule update --init --recursive third-party/llama.cpp",
+		"/var/lib/peanut/models/<model-name>.gguf",
+		"Models.IntentModel=functiongemma.gguf",
+		"peanut_llama",
+		"linux/amd64",
+		"linux/arm64",
+		"windows/amd64",
+		"darwin/arm64",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("documentation does not contain %q", required)
+		}
+	}
+	if strings.Contains(strings.ToLower(text), "llama-cli") {
+		t.Fatal("documentation still describes llama-cli inference")
+	}
+}
+
 func TestProductionInstallersKeepHomeAssistantExternal(t *testing.T) {
 	for _, name := range []string{"install.sh", "install.ps1"} {
 		t.Run(name, func(t *testing.T) {

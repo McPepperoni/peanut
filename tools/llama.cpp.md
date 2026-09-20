@@ -20,9 +20,10 @@ git submodule update --init --recursive third-party/llama.cpp
 ```
 
 GGUF model files stay outside Git and SQLite. Store the intent model as a flat
-file under the configured model root, for example:
+file under the configured model root:
 
 ```text
+/var/lib/peanut/models/<model-name>.gguf
 Models.Root=/var/lib/peanut/models
 Models.IntentModel=functiongemma.gguf
 ```
@@ -45,3 +46,20 @@ installs static archives at `build/llama/amd64/prefix`. It prints the
 `CGO_CFLAGS`, `CGO_CXXFLAGS`, `CGO_LDFLAGS`, and `go build -tags peanut_llama`
 command for the selected target. It never fetches source, downloads models, or
 runs inference subprocesses.
+
+## Release matrix
+
+The tag-triggered release workflow initializes and verifies the pinned
+submodule, builds native static CGO llama.cpp for Linux, and publishes one
+GitHub Release using `GITHUB_TOKEN`:
+
+| Target | Artifact | Backend |
+| --- | --- | --- |
+| `linux/amd64` | `peanut-linux-amd64` | native `peanut_llama` |
+| `linux/arm64` | `peanut-linux-arm64` | native `peanut_llama` |
+| `windows/amd64` | `peanut-windows-amd64.exe` | unavailable stub by default |
+| `darwin/arm64` | `peanut-darwin-arm64` | unavailable stub by default |
+
+Release jobs contain no model weights, registry credentials, Docker Compose
+setup, or Node.js production runtime. Native Windows/macOS builds remain an
+explicit opt-in toolchain exercise; ordinary builds use the stub.

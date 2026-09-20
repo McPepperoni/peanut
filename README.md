@@ -38,6 +38,47 @@ The production artifact is the native CPU-only binary at root `build/peanut` (or
 
 See [`docs/pi5-validation.md`](docs/pi5-validation.md) for the platform matrix, Raspberry Pi 5 checks, model installation, and native smoke-test boundary.
 
+## Pinned llama.cpp runtime
+
+Peanut uses llama.cpp at pinned commit
+`a894dae939d426954ce54bb604824f1ae918a0c5`. From the repository root,
+initialize only that submodule and verify the checked-out commit:
+
+```sh
+./tools/setup-llama.sh
+git -C third-party/llama.cpp rev-parse HEAD
+```
+
+The setup operation is exactly:
+
+```sh
+git submodule update --init --recursive third-party/llama.cpp
+```
+
+The intent GGUF is an external flat file, not a profile bundle:
+
+```text
+/var/lib/peanut/models/<model-name>.gguf
+Models.Root=/var/lib/peanut/models
+Models.IntentModel=functiongemma.gguf
+```
+
+Model bytes stay outside Git, SQLite, and release artifacts. Build the native
+Linux backend after setup with `./tools/build-llama.sh amd64` (or `arm64` on
+an ARM64 host), then build with the `peanut_llama` tag. The default Windows
+amd64 and macOS arm64 builds use the explicit unavailable stub.
+
+| Release target | Artifact | Backend |
+| --- | --- | --- |
+| `linux/amd64` | `peanut-linux-amd64` | native static CGO |
+| `linux/arm64` | `peanut-linux-arm64` | native static CGO |
+| `windows/amd64` | `peanut-windows-amd64.exe` | unavailable stub by default |
+| `darwin/arm64` | `peanut-darwin-arm64` | unavailable stub by default |
+
+A `v*` tag creates one GitHub Release containing those four artifacts. The
+workflow uses the repository `GITHUB_TOKEN`; it does not download model
+weights or require Docker Compose, Node.js, or a model registry.
+
 On Linux, production audio uses ALSA `arecord` and `aplay` at 16 kHz mono. Install ALSA utilities and set SQLite `Audio.InputDevice` / `Audio.OutputDevice` when default devices are not suitable. Other desktop platforms retain explicit unsupported system-audio errors.
 
 ## Production installer

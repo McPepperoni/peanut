@@ -1,6 +1,22 @@
-# Local model bundles
+# Local sherpa model bundles
 
-Peanut discovers local model profiles under the configured `Models.Root` directory (default `models`). Runtime configuration, including that root, lives in SQLite; model bytes never do.
+Peanut discovers sherpa model profiles under the configured `Models.Root`
+directory (default `models`). Runtime configuration, including that root, lives
+in SQLite; model bytes never do.
+
+The intent model is separate: place one external GGUF directly under the model
+root and set `Models.IntentModel` to its filename:
+
+```text
+models/<model-name>.gguf
+Models.Root=models
+Models.IntentModel=functiongemma.gguf
+```
+
+The filename is flat, regular, and `.gguf`; it is not a role/profile bundle and
+is never stored in Git or SQLite. Linux native builds load it in-process with
+the `peanut_llama` tag. Default Windows/macOS builds use the explicit
+unavailable stub.
 
 ## Layout and manifest
 
@@ -11,14 +27,14 @@ models/<role>/<profile>/model.json
 models/<role>/<profile>/<entry and companion files>
 ```
 
-Allowed roles are `kws`, `vad`, `stt`, `speaker`, `tts`, and `intent`. Example:
+Allowed roles are `kws`, `vad`, `stt`, `speaker`, and `tts`. Example:
 
 ```json
 {
-  "id": "intent-local",
-  "role": "intent",
+  "id": "stt-local",
+  "role": "stt",
   "runtime": "local",
-  "entry": "model.gguf",
+  "entry": "model.int8.onnx",
   "sha256": "",
   "threads": 4
 }
@@ -27,8 +43,8 @@ Allowed roles are `kws`, `vad`, `stt`, `speaker`, `tts`, and `intent`. Example:
 Manifest fields:
 
 - `id`: stable profile identifier; duplicate IDs are invalid.
-- `role`: one of the six runtime roles and must match the parent directory.
-- `runtime`: adapter/executable name used by the role; `local`, `llama.cpp`, and `llama-cli` resolve to `llama-cli` for intent profiles. An explicit executable path is also accepted and validated before a live swap.
+- `role`: one of the five sherpa roles and must match the parent directory.
+- `runtime`: adapter name used by the role.
 - `entry`: relative regular file used as the profile entry point; it cannot escape the profile directory.
 - `sha256`: optional checksum for `entry`, compared case-insensitively; empty disables the checksum check.
 - `threads`: declared profile thread count; keep it positive and aligned with the SQLite CPU configuration.
@@ -48,11 +64,11 @@ Native sherpa profiles require these exact files:
 Create a checksum before filling `sha256`:
 
 ```powershell
-(Get-FileHash .\models\intent\local\model.gguf -Algorithm SHA256).Hash.ToLowerInvariant()
+(Get-FileHash .\models\stt\local\model.int8.onnx -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
 ```sh
-sha256sum models/intent/local/model.gguf
+sha256sum models/stt/local/model.int8.onnx
 ```
 
 Copy the resulting 64-character hexadecimal value into `model.json`. Do not commit model bundles, extracted files, source archives, or recordings. `models/` is ignored by Git, and model files are never written to SQLite.
