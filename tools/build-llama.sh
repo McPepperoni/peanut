@@ -65,7 +65,7 @@ cmake "${cmake_args[@]}"
 cmake --build "$build" --config Release --parallel
 cmake --install "$build" --config Release
 mkdir -p "$prefix/lib"
-find "$build" -type f -name '*.a' -exec cp {} "$prefix/lib/" \;
+find "$build" -path "$prefix" -prune -o -type f -name '*.a' -exec cp {} "$prefix/lib/" \;
 test -f "$prefix/lib/libllama.a"
 test -f "$prefix/lib/libllama-common.a"
 

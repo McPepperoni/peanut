@@ -224,3 +224,46 @@ passed
 git diff --check
 passed
 ```
+
+## Remaining Task 3 idempotence fix
+
+`tools/build-llama.sh` previously searched all of `$build` after install,
+including `$prefix/lib`. On a rerun, `cp` therefore attempted to copy the
+installed archives onto themselves. The archive search now prunes `$prefix`
+from its source scope. Added `tools/build-llama-test.sh` as a focused source
+regression check for that guard.
+
+TDD evidence:
+
+```text
+RED: tools/build-llama-test.sh
+archive copy must prune the install prefix from its source scope
+
+GREEN: tools/build-llama-test.sh
+passed
+```
+
+Verification:
+
+```text
+bash -n tools/build-llama.sh
+passed
+
+bash -n tools/build-llama-test.sh
+passed
+
+tools/build-llama.sh riscv64
+rejected with unsupported target (exit 2)
+
+tools/build-llama.sh arm64
+rejected host/target mismatch without a toolchain (exit 2)
+
+go test -count=1 ./internal/llama
+ok   peanut/internal/llama 0.321s
+
+go vet ./internal/llama
+passed
+
+git diff --check
+passed
+```
