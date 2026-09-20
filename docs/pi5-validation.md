@@ -33,6 +33,10 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test ./... -run '^$' -exec true
 ```
 
 `-exec true` compiles target test binaries without trying to execute ARM64 binaries on the build host.
+This check intentionally sets `CGO_ENABLED=0`: it validates portable Go
+compilation only, not the native llama runtime. The release artifact is built
+separately on the native ARM64 runner with `CGO_ENABLED=1`, the
+`peanut_llama` tag, and the pinned static llama archives.
 
 ## Model installation
 
@@ -105,7 +109,8 @@ official model bundles. Do not clone sherpa-onnx into this repository.
 
 Linux uses the system `arecord` and `aplay` utilities as its narrow audio boundary. Install ALSA utilities, grant the service access to the selected devices, and set SQLite `Audio.InputDevice` / `Audio.OutputDevice` when the defaults are not correct. Capture and playback use raw signed 16-bit little-endian PCM at 16 kHz mono; capture is emitted as 320-sample frames. Non-Linux platforms keep the unsupported runtime boundary. File WAV adapters and pure tests remain available.
 
-Startup validates all six active roles before opening native audio. Useful failure prefixes:
+Startup validates all five Sherpa roles and separately resolves the flat
+`Models.IntentModel` before opening native audio. Useful failure prefixes:
 
 - `load <role> model:` — required profile missing or invalid.
 - `scan model roles at <root>:` — model-root scan or runtime-swap failure.

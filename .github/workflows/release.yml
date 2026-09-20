@@ -52,21 +52,7 @@ jobs:
         if: matrix.native
         shell: bash
         run: |
-          cmake -S third-party/llama.cpp -B build/llama/${{ matrix.goarch }} \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=build/llama/${{ matrix.goarch }}/prefix \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DGGML_NATIVE=OFF \
-            -DGGML_CUDA=OFF \
-            -DGGML_METAL=OFF \
-            -DGGML_VULKAN=OFF \
-            -DGGML_HIP=OFF \
-            -DGGML_OPENCL=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_TOOLS=OFF
-          cmake --build build/llama/${{ matrix.goarch }} --config Release --parallel
-          cmake --install build/llama/${{ matrix.goarch }} --config Release
+          ./tools/build-llama.sh "${{ matrix.goarch }}"
       - name: Build native Linux artifact
         if: matrix.native
         shell: bash

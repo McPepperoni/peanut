@@ -40,6 +40,28 @@ func TestLlamaDocumentationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	release, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseText := string(release)
+	if !strings.Contains(releaseText, "./tools/build-llama.sh") {
+		t.Fatal("release workflow does not use the pinned native llama build helper")
+	}
+	buildHelper, err := os.ReadFile(filepath.Join(root, "tools", "build-llama.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildHelperText := string(buildHelper)
+	for _, required := range []string{
+		"-DGGML_OPENMP=OFF",
+		"-DLLAMA_OPENSSL=OFF",
+		"-DLLAMA_SUBPROCESS=OFF",
+	} {
+		if !strings.Contains(buildHelperText, required) {
+			t.Fatalf("native llama build helper does not contain %q", required)
+		}
+	}
 	paths := []string{
 		"README.md",
 		"tools/llama.cpp.md",
@@ -60,6 +82,9 @@ func TestLlamaDocumentationContract(t *testing.T) {
 		"git submodule update --init --recursive third-party/llama.cpp",
 		"/var/lib/peanut/models/<model-name>.gguf",
 		"Models.IntentModel=functiongemma.gguf",
+		"The intent GGUF is a single external flat file:",
+		"five Sherpa roles",
+		"CGO_ENABLED=1",
 		"peanut_llama",
 		"linux/amd64",
 		"linux/arm64",
@@ -72,6 +97,13 @@ func TestLlamaDocumentationContract(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(text), "llama-cli") {
 		t.Fatal("documentation still describes llama-cli inference")
+	}
+	piValidation, err := os.ReadFile(filepath.Join(root, "docs", "pi5-validation.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(piValidation), "all six active roles") {
+		t.Fatal("Pi 5 documentation still describes intent as a sixth profile role")
 	}
 }
 
