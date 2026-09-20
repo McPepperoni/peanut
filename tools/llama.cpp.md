@@ -31,3 +31,15 @@ Native Linux builds use the `peanut_llama` CGO tag and static CPU-only llama.cpp
 libraries. Windows amd64 and macOS arm64 default builds use the explicit
 unavailable stub. Building llama.cpp is separate from submodule setup and must
 not download model files.
+
+Build the native Linux archive from the repository root after setup:
+
+```sh
+./tools/build-llama.sh amd64
+```
+
+The helper verifies the pinned commit, disables accelerator backends and
+examples/tests/tools, and installs static archives at
+`build/llama/amd64/prefix`. It prints the `CGO_CFLAGS`, `CGO_LDFLAGS`, and
+`go build -tags peanut_llama` command for the selected target. It never fetches
+source, downloads models, or runs inference subprocesses.
