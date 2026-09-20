@@ -27,6 +27,19 @@ func TestRequestRejectsInvalidLimits(t *testing.T) {
 	}
 }
 
+func TestNativeGenerateBoundsPromptBeforeCString(t *testing.T) {
+	source, err := os.ReadFile("native_cgo.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	guardAt := strings.Index(text, "len(request.Prompt) > maxPromptBytes")
+	cstringAt := strings.Index(text, "C.CString(request.Prompt)")
+	if guardAt < 0 || cstringAt < 0 || guardAt > cstringAt {
+		t.Fatalf("native Go path must reject oversized prompts before C.CString: guard=%d cstring=%d", guardAt, cstringAt)
+	}
+}
+
 func TestNativeGenerateClearsContextMemoryBeforeTokenization(t *testing.T) {
 	source, err := os.ReadFile("native.cpp")
 	if err != nil {

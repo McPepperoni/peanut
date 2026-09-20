@@ -45,6 +45,9 @@ func Open(ctx context.Context, modelPath string, threads int) (Engine, error) {
 }
 
 func (e *nativeEngine) Generate(ctx context.Context, request Request) ([]byte, error) {
+	if len(request.Prompt) > maxPromptBytes {
+		return nil, ErrPromptTooLarge
+	}
 	if err := validateRequest(request); err != nil {
 		return nil, err
 	}

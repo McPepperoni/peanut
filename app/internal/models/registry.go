@@ -2,6 +2,7 @@
 package models
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -50,6 +51,35 @@ type manifest struct {
 	SHA256  string `json:"sha256"`
 }
 
+type legacyThreads int
+
+func (t *legacyThreads) UnmarshalJSON(data []byte) error {
+	var value int
+	if err := json.Unmarshal(data, &value); err != nil || value <= 0 {
+		return errors.New(`legacy manifest field "threads" must be a positive integer`)
+	}
+	*t = legacyThreads(value)
+	return nil
+}
+
+func (m *manifest) UnmarshalJSON(data []byte) error {
+	var decoded struct {
+		ID            string        `json:"id"`
+		Role          Role          `json:"role"`
+		Runtime       string        `json:"runtime"`
+		Entry         string        `json:"entry"`
+		SHA256        string        `json:"sha256"`
+		LegacyThreads legacyThreads `json:"threads"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*m = manifest{ID: decoded.ID, Role: decoded.Role, Runtime: decoded.Runtime, Entry: decoded.Entry, SHA256: decoded.SHA256}
+	return nil
+}
+
 type Snapshot struct {
 	Profiles []Profile        `json:"profiles"`
 	Active   map[Role]Profile `json:"active"`
@@ -93,9 +123,23 @@ func (r *Registry) Scan(ctx context.Context) (Snapshot, error) {
 	r.mu.RLock()
 	active := cloneActive(r.active)
 	r.mu.RUnlock()
+	for _, profile := range previous {
+		if !profile.Active {
+			continue
+		}
+		if _, exists := active[profile.Role]; exists {
+			continue
+		}
+		for _, current := range profiles {
+			if current.Valid && current.Role == profile.Role && current.ID == profile.ID && current.Path == profile.Path {
+				active[profile.Role] = current
+				break
+			}
+		}
+	}
 	delete(active, RoleIntent)
 	normalizeProfiles(profiles, active)
-	selected := selectProfiles(profiles)
+	selected := selectProfilesPreserving(profiles, active)
 	for role, profile := range selected {
 		active[role] = profile
 	}
@@ -231,6 +275,26 @@ func selectProfiles(profiles []Profile) map[Role]Profile {
 	for _, profile := range profiles {
 		if _, exists := selected[profile.Role]; profile.Valid && !exists {
 			selected[profile.Role] = profile
+		}
+	}
+	return selected
+}
+
+func selectProfilesPreserving(profiles []Profile, active map[Role]Profile) map[Role]Profile {
+	selected := make(map[Role]Profile)
+	for role, prior := range active {
+		for _, profile := range profiles {
+			if profile.Valid && profile.Role == role && profile.ID == prior.ID && profile.Path == prior.Path {
+				selected[role] = profile
+				break
+			}
+		}
+	}
+	for _, profile := range profiles {
+		if profile.Valid {
+			if _, exists := selected[profile.Role]; !exists {
+				selected[profile.Role] = profile
+			}
 		}
 	}
 	return selected

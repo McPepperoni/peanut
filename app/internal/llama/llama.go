@@ -22,7 +22,10 @@ var (
 	ErrCancelled          = errors.New("llama generation cancelled")
 )
 
-const maxTokens = 4096
+const (
+	maxTokens      = 4096
+	maxPromptBytes = 64 * 1024
+)
 
 type Request struct {
 	Prompt    string

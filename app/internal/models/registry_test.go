@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -109,7 +110,7 @@ func TestRegistryValidatesStrictManifestAndChecksum(t *testing.T) {
 	}
 }
 
-func TestRegistryRejectsRemovedThreadsManifestField(t *testing.T) {
+func TestRegistryMigratesLegacyThreadsManifestField(t *testing.T) {
 	root := t.TempDir()
 	writeModelManifest(t, root, "stt/threads", `{"id":"threads","role":"stt","runtime":"local","entry":"model.gguf","threads":4}`)
 
@@ -117,8 +118,68 @@ func TestRegistryRejectsRemovedThreadsManifestField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Profiles) != 1 || snapshot.Profiles[0].Valid || !strings.Contains(snapshot.Profiles[0].Error, `unknown field "threads"`) {
+	if len(snapshot.Profiles) != 1 || !snapshot.Profiles[0].Valid {
 		t.Fatalf("profile = %#v", snapshot.Profiles)
+	}
+	encoded, err := json.Marshal(snapshot.Profiles[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["threads"]; ok {
+		t.Fatalf("profile exposed legacy threads: %s", encoded)
+	}
+}
+
+func TestRegistryRejectsInvalidLegacyThreadsManifestField(t *testing.T) {
+	for name, value := range map[string]string{
+		"string":   `"4"`,
+		"fraction": `4.5`,
+		"zero":     `0`,
+		"negative": `-1`,
+		"null":     `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeModelManifest(t, root, "stt/threads", fmt.Sprintf(`{"id":"threads","role":"stt","runtime":"local","entry":"model.gguf","threads":%s}`, value))
+
+			snapshot, err := NewRegistry(root, &fakeModelStore{}, nil).Scan(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Profiles) != 1 || snapshot.Profiles[0].Valid || !strings.Contains(snapshot.Profiles[0].Error, "threads") {
+				t.Fatalf("profile = %#v", snapshot.Profiles)
+			}
+		})
+	}
+}
+
+func TestRegistryPreservesActiveProfileOnReload(t *testing.T) {
+	root := t.TempDir()
+	store := &fakeModelStore{}
+	registry := NewRegistry(root, store, nil)
+	writeModelManifest(t, root, "stt/z", `{"id":"stt-z","role":"stt","runtime":"local","entry":"model.gguf"}`)
+	if _, err := registry.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	writeModelManifest(t, root, "stt/a", `{"id":"stt-a","role":"stt","runtime":"local","entry":"model.gguf"}`)
+
+	snapshot, err := registry.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active := snapshot.Active[RoleSTT]; active.ID != "stt-z" {
+		t.Fatalf("active stt = %#v", active)
+	}
+	fresh, err := NewRegistry(root, store, nil).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active := fresh.Active[RoleSTT]; active.ID != "stt-z" {
+		t.Fatalf("fresh active stt = %#v", active)
 	}
 }
 
