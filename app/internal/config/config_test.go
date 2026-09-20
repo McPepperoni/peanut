@@ -38,7 +38,7 @@ func TestLoadDefaultsAreValid(t *testing.T) {
 	if cfg.API.Address != "127.0.0.1:8080" {
 		t.Fatalf("API address = %q", cfg.API.Address)
 	}
-	if cfg.Models.Root != "models" || cfg.Models.Threads != 4 || !cfg.Models.CPUOnly {
+	if cfg.Models.Root != "models" || cfg.Models.IntentModel != "functiongemma.gguf" || cfg.Models.Threads != 4 || !cfg.Models.CPUOnly {
 		t.Fatalf("model config = %+v", cfg.Models)
 	}
 }
@@ -138,6 +138,41 @@ func TestPersistDefaultsMigratesLegacyModelPaths(t *testing.T) {
 	}
 	if cfg.Audio.InputDevice != "legacy-mic" || cfg.HomeAssistant.Token != "ha-secret" || cfg.API.PairingToken != "pairing-secret" {
 		t.Fatalf("unrelated settings changed: %+v", cfg)
+	}
+}
+
+func TestPersistDefaultsMigratesMissingIntentModel(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "peanut.db")
+	db := initializeDatabase(t, path)
+	cfg := defaultConfig()
+	cfg.Models.Root = "custom-models"
+	cfg.Models.IntentModel = ""
+	cfg.HomeAssistant.Token = "ha-secret"
+	cfg.API.PairingToken = "pairing-secret"
+	stored, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES ('runtime_config', ?)`, stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := PersistDefaults(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Models.IntentModel != "functiongemma.gguf" {
+		t.Fatalf("intent model = %q", got.Models.IntentModel)
+	}
+	if got.Models.Root != "custom-models" || got.HomeAssistant.Token != "ha-secret" || got.API.PairingToken != "pairing-secret" {
+		t.Fatalf("unrelated settings changed: %+v", got)
 	}
 }
 

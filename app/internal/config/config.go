@@ -39,9 +39,10 @@ type Audio struct {
 }
 
 type Models struct {
-	Root    string
-	Threads int
-	CPUOnly bool
+	Root        string
+	IntentModel string
+	Threads     int
+	CPUOnly     bool
 }
 
 type HomeAssistant struct {
@@ -95,27 +96,34 @@ func PersistDefaults(ctx context.Context, db *sqlite.DB) error {
 	if err := json.Unmarshal(stored, &cfg); err != nil {
 		return fmt.Errorf("decode stored config for migration: %w", err)
 	}
-	if cfg.Models.Root != "" {
-		return nil
+	needsMigration := false
+	if cfg.Models.IntentModel == "" {
+		cfg.Models.IntentModel = defaultConfig().Models.IntentModel
+		needsMigration = true
 	}
-	var legacy struct {
-		Models struct {
-			WakeWordPath string
-			VADPath      string
-			STTPath      string
-			SpeakerPath  string
-			TTSPath      string
-			IntentPath   string
-			LlamaPath    string
+	if cfg.Models.Root == "" {
+		var legacy struct {
+			Models struct {
+				WakeWordPath string
+				VADPath      string
+				STTPath      string
+				SpeakerPath  string
+				TTSPath      string
+				IntentPath   string
+				LlamaPath    string
+			}
+		}
+		if err := json.Unmarshal(stored, &legacy); err != nil {
+			return fmt.Errorf("decode legacy config: %w", err)
+		}
+		if legacy.Models.WakeWordPath != "" || legacy.Models.VADPath != "" || legacy.Models.STTPath != "" || legacy.Models.SpeakerPath != "" || legacy.Models.TTSPath != "" || legacy.Models.IntentPath != "" || legacy.Models.LlamaPath != "" {
+			cfg.Models.Root = defaultConfig().Models.Root
+			needsMigration = true
 		}
 	}
-	if err := json.Unmarshal(stored, &legacy); err != nil {
-		return fmt.Errorf("decode legacy config: %w", err)
-	}
-	if legacy.Models.WakeWordPath == "" && legacy.Models.VADPath == "" && legacy.Models.STTPath == "" && legacy.Models.SpeakerPath == "" && legacy.Models.TTSPath == "" && legacy.Models.IntentPath == "" && legacy.Models.LlamaPath == "" {
+	if !needsMigration {
 		return nil
 	}
-	cfg.Models.Root = defaultConfig().Models.Root
 	stored, err = json.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("encode migrated config: %w", err)
@@ -141,9 +149,10 @@ func defaultConfig() Config {
 			DebugAudioPath:         "data/debug-audio",
 		},
 		Models: Models{
-			Root:    "models",
-			Threads: 4,
-			CPUOnly: true,
+			Root:        "models",
+			IntentModel: "functiongemma.gguf",
+			Threads:     4,
+			CPUOnly:     true,
 		},
 		HomeAssistant: HomeAssistant{
 			URL:     "http://127.0.0.1:8123",
