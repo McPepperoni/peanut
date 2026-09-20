@@ -54,6 +54,7 @@ jobs:
         run: |
           cmake -S third-party/llama.cpp -B build/llama/${{ matrix.goarch }} \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=build/llama/${{ matrix.goarch }}/prefix \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_NATIVE=OFF \
             -DGGML_CUDA=OFF \
@@ -65,11 +66,16 @@ jobs:
             -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_TOOLS=OFF
           cmake --build build/llama/${{ matrix.goarch }} --config Release --parallel
+          cmake --install build/llama/${{ matrix.goarch }} --config Release
       - name: Build native Linux artifact
         if: matrix.native
         shell: bash
         working-directory: app
         run: go build -tags peanut_llama -o "../${{ matrix.artifact }}" ./cmd/peanut
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-I${{ github.workspace }}/build/llama/${{ matrix.goarch }}/prefix/include"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/build/llama/${{ matrix.goarch }}/prefix/lib"
       - name: Build stub artifact
         if: '!matrix.native'
         shell: bash
