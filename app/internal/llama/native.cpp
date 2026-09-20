@@ -14,7 +14,8 @@
 #include <string>
 
 #define PEANUT_LLAMA_CONTEXT_SIZE 4096
-#define PEANUT_LLAMA_BATCH_SIZE 2048
+// Fixed 4096-token batch bounds batch storage while covering the full context window.
+#define PEANUT_LLAMA_BATCH_SIZE 4096
 #define PEANUT_LLAMA_MAX_OUTPUT_BYTES (4u * 1024u * 1024u)
 #define PEANUT_LLAMA_SAMPLER_SEED 42u
 

@@ -22,12 +22,8 @@ func TestRequestRejectsInvalidLimits(t *testing.T) {
 	if err := validateRequest(Request{Prompt: "x", Threads: 1, MaxTokens: 0}); err == nil {
 		t.Fatal("accepted zero max tokens")
 	}
-}
-
-func TestValidateContextBudgetRejectsOverContextRequest(t *testing.T) {
-	err := validateContextBudget(3585, 512, contextSize)
-	if err == nil || !errors.Is(err, ErrContextExceeded) || !strings.Contains(err.Error(), "prompt tokens (3585) + max tokens (512) exceed context size (4096)") {
-		t.Fatalf("error = %v, want over-context validation error", err)
+	if err := validateRequest(Request{Prompt: "x", Threads: 1, MaxTokens: maxTokens + 1}); err == nil {
+		t.Fatal("accepted max tokens above request limit")
 	}
 }
 
@@ -45,6 +41,29 @@ func TestNativeGenerateClearsContextMemoryBeforeTokenization(t *testing.T) {
 	}
 	if tokenizeAt < 0 || clearAt > tokenizeAt {
 		t.Fatalf("context memory clear must precede tokenization: clear=%d tokenize=%d", clearAt, tokenizeAt)
+	}
+}
+
+func TestNativeBatchSizeCoversContextWindow(t *testing.T) {
+	source, err := os.ReadFile("native.cpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "#define PEANUT_LLAMA_BATCH_SIZE 4096") {
+		t.Fatal("native batch size must cover the maximum 4096-token context")
+	}
+}
+
+func TestNativeContextBoundaryPrecedesPromptDecode(t *testing.T) {
+	source, err := os.ReadFile("native.cpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	boundaryAt := strings.Index(text, "prompt_tokens_len > PEANUT_LLAMA_CONTEXT_SIZE - max_tokens")
+	decodeAt := strings.Index(text, "llama_batch_get_one(prompt_tokens, prompt_tokens_len)")
+	if boundaryAt < 0 || decodeAt < 0 || boundaryAt > decodeAt {
+		t.Fatal("native context boundary must be checked before prompt decode")
 	}
 }
 

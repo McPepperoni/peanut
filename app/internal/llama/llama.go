@@ -22,7 +22,6 @@ var (
 )
 
 const maxTokens = 4096
-const contextSize = 4096
 
 type Request struct {
 	Prompt    string
@@ -45,13 +44,6 @@ func validateRequest(request Request) error {
 	}
 	if request.MaxTokens <= 0 || request.MaxTokens > maxTokens {
 		return fmt.Errorf("%w: max tokens must be between 1 and %d", ErrInvalidRequest, maxTokens)
-	}
-	return nil
-}
-
-func validateContextBudget(promptTokens, requestedTokens, limit int) error {
-	if promptTokens < 0 || requestedTokens <= 0 || requestedTokens > limit || promptTokens > limit-requestedTokens {
-		return fmt.Errorf("%w: prompt tokens (%d) + max tokens (%d) exceed context size (%d)", ErrContextExceeded, promptTokens, requestedTokens, limit)
 	}
 	return nil
 }
