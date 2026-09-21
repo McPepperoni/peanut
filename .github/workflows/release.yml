@@ -105,8 +105,6 @@ jobs:
             test -s "$library"
           done
           ldflags="${libraries[*]} -lstdc++ -lm -ldl -pthread"
-          printf 'int main(void) { return 0; }\n' | g++ -x c++ -o "$root/link-probe" "${libraries[@]}" -lstdc++ -lm -ldl -pthread
-          rm -f "$root/link-probe"
           echo "CGO_LDFLAGS=$ldflags" >> "$GITHUB_ENV"
       - name: Build native Linux artifact
         if: matrix.native
