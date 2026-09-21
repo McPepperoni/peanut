@@ -1,0 +1,19 @@
+{
+  "name": "peanut",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "bun@1.4.2",
+  "devDependencies": {
+    "@types/bun": "1.4.2"
+  },
+  "scripts": {
+    "prepare": "bun scripts/prepare.ts",
+    "test": "go -C app test ./...",
+    "vet": "go -C app vet ./...",
+    "build": "bun scripts/build.ts",
+    "release": "bun test scripts/release-version.test.ts",
+    "ci": "bun run test && bun run vet && bun run release && bun run build",
+    "release:validate": "bun scripts/release-version.ts",
+    "precommit": "bun run test && bun run vet"
+  }
+}
