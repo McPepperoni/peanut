@@ -71,5 +71,5 @@ test -f "$prefix/lib/libllama-common.a"
 
 echo "CGO_CFLAGS=-I$prefix/include"
 echo "CGO_CXXFLAGS=-I$source/common"
-echo "CGO_LDFLAGS=-L$prefix/lib -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base"
+echo "CGO_LDFLAGS=$prefix/lib/libllama-common.a $prefix/lib/libllama-common-base.a $prefix/lib/libllama.a $prefix/lib/libggml.a $prefix/lib/libggml-cpu.a $prefix/lib/libggml-base.a -lstdc++ -lm -ldl -pthread"
 echo "go build -tags peanut_llama ./cmd/peanut"

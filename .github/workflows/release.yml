@@ -92,15 +92,22 @@ jobs:
           mapfile -t archives < <(find "$root" -type f -name '*.a' -print)
           ((${#archives[@]} > 0))
           printf '%s\n' "${archives[@]}"
-          ldflags="-L$root/prefix/lib"
-          while IFS= read -r directory; do
-            ldflags+=" -L$directory"
-          done < <(printf '%s\n' "${archives[@]}" | xargs -r -n1 dirname | sort -u)
-          printf 'int main(void) { return 0; }\n' | g++ -x c++ -o "$root/link-probe" -L"$root/prefix/lib" $ldflags -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base
+          libdir="$root/prefix/lib"
+          libraries=(
+            "$libdir/libllama-common.a"
+            "$libdir/libllama-common-base.a"
+            "$libdir/libllama.a"
+            "$libdir/libggml.a"
+            "$libdir/libggml-cpu.a"
+            "$libdir/libggml-base.a"
+          )
+          for library in "${libraries[@]}"; do
+            test -s "$library"
+          done
+          ldflags="${libraries[*]} -lstdc++ -lm -ldl -pthread"
+          printf 'int main(void) { return 0; }\n' | g++ -x c++ -o "$root/link-probe" "${libraries[@]}" -lstdc++ -lm -ldl -pthread
           rm -f "$root/link-probe"
           echo "CGO_LDFLAGS=$ldflags" >> "$GITHUB_ENV"
-          library_path=$(printf '%s\n' "${archives[@]}" | xargs -r -n1 dirname | sort -u | paste -sd: -)
-          echo "LIBRARY_PATH=$library_path" >> "$GITHUB_ENV"
       - name: Build native Linux artifact
         if: matrix.native
         shell: bash

@@ -5,9 +5,8 @@ package llama
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../../third-party/llama.cpp/include -I${SRCDIR}/../../../third-party/llama.cpp/ggml/include
 #cgo CXXFLAGS: -I${SRCDIR}/../../../third-party/llama.cpp/include -I${SRCDIR}/../../../third-party/llama.cpp/ggml/include -I${SRCDIR}/../../../third-party/llama.cpp/common
-#cgo linux LDFLAGS: -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base -lstdc++ -lm -ldl -pthread
-#cgo darwin LDFLAGS: -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base -lc++ -lm
-#cgo windows LDFLAGS: -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base
+#cgo linux LDFLAGS: -lstdc++ -lm -ldl -pthread
+#cgo darwin LDFLAGS: -lc++ -lm
 #include <stdlib.h>
 #include "native.h"
 */
