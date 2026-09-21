@@ -77,6 +77,20 @@ jobs:
         shell: bash
         run: |
           ./tools/build-llama.sh "${{ matrix.goarch }}"
+      - name: Verify native archives and export link paths
+        if: matrix.native
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${{ github.workspace }}/build/llama/${{ matrix.goarch }}"
+          mapfile -t archives < <(find "$root" -type f -name '*.a' -print)
+          ((${#archives[@]} > 0))
+          printf '%s\n' "${archives[@]}"
+          ldflags="-L$root/prefix/lib"
+          while IFS= read -r directory; do
+            ldflags+=" -L$directory"
+          done < <(printf '%s\n' "${archives[@]}" | xargs -r -n1 dirname | sort -u)
+          echo "CGO_LDFLAGS=$ldflags" >> "$GITHUB_ENV"
       - name: Build native Linux artifact
         if: matrix.native
         shell: bash
@@ -85,7 +99,6 @@ jobs:
         env:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-I${{ github.workspace }}/build/llama/${{ matrix.goarch }}/prefix/include"
-          CGO_LDFLAGS: "-L${{ github.workspace }}/build/llama/${{ matrix.goarch }}/prefix/lib"
       - name: Build stub artifact
         if: '!matrix.native'
         shell: bash
