@@ -1,4 +1,5 @@
 /build/
+/node_modules/
 /assets/
 /dev/home-assistant-core/
 /local-model/
