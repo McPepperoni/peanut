@@ -91,6 +91,8 @@ jobs:
             ldflags+=" -L$directory"
           done < <(printf '%s\n' "${archives[@]}" | xargs -r -n1 dirname | sort -u)
           echo "CGO_LDFLAGS=$ldflags" >> "$GITHUB_ENV"
+          library_path=$(printf '%s\n' "${archives[@]}" | xargs -r -n1 dirname | sort -u | paste -sd: -)
+          echo "LIBRARY_PATH=$library_path" >> "$GITHUB_ENV"
       - name: Build native Linux artifact
         if: matrix.native
         shell: bash
