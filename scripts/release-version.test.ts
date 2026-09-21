@@ -47,10 +47,13 @@ async function commitVersion(cwd: string, version: string): Promise<void> {
   await run(["git", "commit", "-m", version], cwd);
 }
 
-async function validate(cwd: string, version: string): Promise<CommandResult & { output: string }> {
+async function validate(cwd: string, version: string, baseRef?: string): Promise<CommandResult & { output: string }> {
   await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "peanut", version }));
   const output = join(cwd, "github-output");
-  const result = await run([process.execPath, validator], cwd, { GITHUB_OUTPUT: output });
+  const result = await run([process.execPath, validator], cwd, {
+    GITHUB_OUTPUT: output,
+    ...(baseRef ? { PEANUT_RELEASE_BASE: baseRef } : {}),
+  });
   return { ...result, output: await readFile(output, "utf8").catch(() => "") };
 }
 
@@ -94,6 +97,19 @@ test("compares the working package with the parent commit", async () => {
   try {
     await commitVersion(cwd, "0.2.0");
     expect((await validate(cwd, "0.1.0")).code).not.toBe(0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("uses the push base commit when later commits are in the push", async () => {
+  const cwd = await createRepository("0.1.0");
+  try {
+    await commitVersion(cwd, "0.2.0");
+    await writeFile(join(cwd, "after"), "after");
+    await run(["git", "add", "after"], cwd);
+    await run(["git", "commit", "-m", "after"], cwd);
+    expect((await validate(cwd, "0.2.0", "HEAD~2")).code).toBe(0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

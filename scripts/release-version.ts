@@ -33,10 +33,11 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function parentPackage(): Promise<PackageJson> {
-  const result = await git(["show", "HEAD^:package.json"]);
+async function parentPackage(ref: string): Promise<PackageJson> {
+  if (/^0+$/.test(ref)) return {};
+  const result = await git(["show", `${ref}:package.json`]);
   if (result.code !== 0) {
-    if (/does not have any commits yet|ambiguous argument 'HEAD\^'|invalid object name 'HEAD\^'/i.test(result.stderr)) {
+    if (/does not have any commits yet|ambiguous argument|invalid object name|exists on disk, but not in|path .*package\.json.*does not exist/i.test(result.stderr)) {
       return {};
     }
     fail(result.stderr.trim() || "could not read parent package.json");
@@ -68,7 +69,7 @@ if (typeof version !== "string" || !semver.test(version)) {
   fail(`invalid package version: ${String(version)}`);
 }
 
-const parent = await parentPackage();
+const parent = await parentPackage(Bun.env.PEANUT_RELEASE_BASE || "HEAD^");
 if (typeof parent.version === "string" && parent.version === version) {
   fail(`package version is unchanged: ${version}`);
 }
