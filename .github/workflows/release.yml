@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
     paths: [package.json]
+  workflow_dispatch:
+    inputs:
+      release_base:
+        description: Commit containing previous package version
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -29,7 +35,7 @@ jobs:
         id: release
         run: bun run release:validate
         env:
-          PEANUT_RELEASE_BASE: ${{ github.event.before }}
+          PEANUT_RELEASE_BASE: ${{ inputs.release_base || github.event.before }}
 
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -90,6 +96,8 @@ jobs:
           while IFS= read -r directory; do
             ldflags+=" -L$directory"
           done < <(printf '%s\n' "${archives[@]}" | xargs -r -n1 dirname | sort -u)
+          printf 'int main(void) { return 0; }\n' | g++ -x c++ -o "$root/link-probe" -L"$root/prefix/lib" $ldflags -llama-common -llama-common-base -llama -lggml -lggml-cpu -lggml-base
+          rm -f "$root/link-probe"
           echo "CGO_LDFLAGS=$ldflags" >> "$GITHUB_ENV"
           library_path=$(printf '%s\n' "${archives[@]}" | xargs -r -n1 dirname | sort -u | paste -sd: -)
           echo "LIBRARY_PATH=$library_path" >> "$GITHUB_ENV"
