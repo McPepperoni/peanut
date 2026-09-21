@@ -28,6 +28,8 @@ jobs:
       - name: Validate release version
         id: release
         run: bun run release:validate
+        env:
+          PEANUT_RELEASE_BASE: ${{ github.event.before }}
 
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
